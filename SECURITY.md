@@ -28,7 +28,7 @@ App Management has **no database and no accounts of its own**. Every IoT Open re
 
 ## Operator checklist
 
-1. **Use the socket proxy.** Give App Management `DOCKER_HOST=tcp://docker-proxy:2375` with [docker-socket-proxy](https://github.com/Tecnativa/docker-socket-proxy) on an internal network, as in `docker-compose.yml`, rather than mounting `/var/run/docker.sock` into App Management. The proxy limits the API to containers, images and volumes. It still allows creating containers, so treat App Management as a privileged service: anyone who can take over the App Management container can take over the Docker host.
+1. **Use the socket proxy.** Give App Management `DOCKER_HOST=tcp://docker-proxy:2375` with [docker-socket-proxy](https://github.com/Tecnativa/docker-socket-proxy) on an internal network, as in `docker-compose.yml`, rather than mounting `/var/run/docker.sock` into App Management. The proxy limits the API to containers, images, volumes and networks. It still allows creating containers, so treat App Management as a privileged service: anyone who can take over the App Management container can take over the Docker host.
 2. **Leave `DOCKER_HOST` empty if you do not need edge clients.** App Management then has no Docker access at all.
 3. **Set `EDGE_ADMINS`.** Without it, every IoT Open user who can see an installation can create, stop and remove its edge client here.
 4. **Set `GITHUB_OWNERS` and review `GITHUB_INCLUDE`.** An edge app runs on the edge client with access to the installation's MQTT topics. Without `GITHUB_OWNERS` any public repository with the topic is listed (the user sees a warning). With it, only your own or trusted owners' apps are offered.

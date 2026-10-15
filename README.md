@@ -70,26 +70,24 @@ The mock (`mock/server.mjs`, no dependencies) implements the parts of IoT Open, 
 | `GITHUB_PRERELEASES`      | `false`                               | `true` also offers pre-releases |
 | `DOCKER_HOST`             | *(empty = edge clients off)*          | `tcp://docker-proxy:2375` (recommended) or `unix:///var/run/docker.sock` |
 | `EDGE_CLIENT_IMAGE`       | `ghcr.io/iotopen/edge-client:latest`  | Image for new edge clients and updates |
-| `EDGE_CLIENT_NETWORK`     | *(empty = Docker's default)*          | Docker network for edge client containers |
+| `EDGE_CLIENT_NETWORK`     | *(empty = Docker's default)*          | Docker network for edge client containers, created on first use (bridge, outbound only). `deploy/compose.yml` uses `iotopen-edge` |
 | `EDGE_ADMINS`             | *(empty = any signed-in user)*        | IoT Open users (e-mail or user id, comma separated) who may manage edge clients |
 | `REAL_IP_HEADER`          | *(empty)*                             | Header with the client address set by a trusted reverse proxy, e.g. `cf-connecting-ip`, for the sign-in rate limit |
 
-### Behind the edge proxy
+### Production behind the edge proxy
 
-With [automateit-se/edge](https://github.com/automateit-se/edge) the container joins the `edge` network with an alias, and a file in the edge repository's `sites/` publishes it:
+[`deploy/compose.yml`](deploy/compose.yml) runs App Management from `ghcr.io` behind [automateit-se/edge](https://github.com/automateit-se/edge) (alias `appmanagement` on the `edge` network, published by `sites/appmanagement.conf` there), with the socket proxy on an internal network. Settings go in a `.env` next to it, see [`deploy/env.example`](deploy/env.example); `EDGE_ADMINS` is required.
 
-```yaml
-services:
-  appmanagement:
-    networks:
-      default:
-      docker:
-      edge:
-        aliases: [appmanagement]
-networks:
-  edge:
-    external: true
+```bash
+sudo mkdir -p /opt/appmanagement && cd /opt/appmanagement
+sudo curl -fsSLO https://raw.githubusercontent.com/automateit-se/appmanagement/main/deploy/compose.yml
+sudo curl -fsSL -o .env https://raw.githubusercontent.com/automateit-se/appmanagement/main/deploy/env.example
+sudo nano .env            # EDGE_ADMINS=...
+sudo docker compose up -d
+sudo edge-update          # on the edge host: publishes appmanagement.<domain>
 ```
+
+Sign-in is IoT Open's own; nothing else is put in front of it.
 
 ## Making an edge app for App Management
 

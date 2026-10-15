@@ -209,6 +209,15 @@ test('edge client lifecycle', async () => {
   assert.equal((await post('/app-api/edge/1002/start')).status, 404);
 });
 
+test('EDGE_CLIENT_NETWORK is created on first use', async () => {
+  const s = await start(envFor({ EDGE_CLIENT_NETWORK: 'iotopen-edge' }));
+  const r = await fetch(s.url + '/app-api/edge/1002', { method: 'POST', headers: { 'X-API-Key': KEY }, body: JSON.stringify({ confirm: true, replaceOnline: true }) });
+  assert.equal(r.status, 201);
+  assert.equal((await fetch(`${mockUrl}/docker/networks/iotopen-edge`)).status, 200);
+  await fetch(s.url + '/app-api/edge/1002?config=true', { method: 'DELETE', headers: { 'X-API-Key': KEY } });
+  s.server.close();
+});
+
 test('EDGE_ADMINS restricts edge client management', async () => {
   const s = await start(envFor({ EDGE_ADMINS: 'admin@example.com' }));
   const r = await fetch(s.url + '/app-api/edge/1001', { headers: { 'X-API-Key': KEY } });

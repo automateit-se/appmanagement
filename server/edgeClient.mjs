@@ -47,7 +47,19 @@ export function edgeClients(cfg, docker, lynx) {
     await docker.json('PUT', `/containers/${containerId}/archive`, { query: { path: '/etc/iot-open' }, body: tar, contentType: 'application/x-tar' });
   }
 
+  /** EDGE_CLIENT_NETWORK is created on first use (a bridge network with outbound access, nothing published). */
+  async function ensureNetwork() {
+    const name = cfg.edge.network;
+    if (!name || ['bridge', 'host', 'none', 'default'].includes(name)) return;
+    const found = await docker.json('GET', `/networks/${encodeURIComponent(name)}`).catch((e) => (e.status === 404 ? null : Promise.reject(e)));
+    if (found) return;
+    await docker.json('POST', '/networks/create', { body: { Name: name, Driver: 'bridge', CheckDuplicate: true, Labels: { [`${L}.role`]: 'edge-network' } } }).catch((e) => {
+      if (e.status !== 409) throw e; // created at the same moment by another request
+    });
+  }
+
   async function createContainer(iid, user) {
+    await ensureNetwork();
     const body = {
       Image: cfg.edge.image,
       Env: ['HEADLESS=true'],

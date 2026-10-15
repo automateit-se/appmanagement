@@ -1,0 +1,66 @@
+# App Management on a Docker host behind the edge reverse proxy (github.com/automateit-se/edge).
+#
+#   sudo mkdir -p /opt/appmanagement && cd /opt/appmanagement
+#   sudo curl -fsSLO https://raw.githubusercontent.com/automateit-se/appmanagement/main/deploy/compose.yml
+#   sudo curl -fsSL -o .env https://raw.githubusercontent.com/automateit-se/appmanagement/main/deploy/env.example
+#   sudo nano .env                      # at least EDGE_ADMINS
+#   sudo docker compose up -d
+#   sudo edge-update                    # publishes appmanagement.<domain> through the edge (sites/appmanagement.conf)
+#
+# Edge clients are not defined here: App Management starts them as sibling containers through the socket proxy
+# (one iotopen-edge-<installation> per installation) on the network "iotopen-edge", which App Management creates
+# on first use: outbound only (IoT Open 443/8883), no published ports, apart from the edge and the proxy.
+name: appmanagement
+
+services:
+  appmanagement:
+    image: ghcr.io/automateit-se/appmanagement:${APPMANAGEMENT_TAG:-main}
+    restart: unless-stopped
+    environment:
+      LYNX_URL: ${LYNX_URL:-https://lynx.iotopen.se}
+      ALLOWED_LYNX_HOSTS: ${ALLOWED_LYNX_HOSTS:-lynx.iotopen.se}
+      APP_TITLE: ${APP_TITLE:-App Management}
+      # edge clients through the socket proxy, on their own network
+      DOCKER_HOST: tcp://docker-proxy:2375
+      EDGE_CLIENT_NETWORK: iotopen-edge
+      EDGE_CLIENT_IMAGE: ${EDGE_CLIENT_IMAGE:-ghcr.io/iotopen/edge-client:latest}
+      # IoT Open users (e-mail or user id, comma separated) who may manage edge clients - required here
+      EDGE_ADMINS: ${EDGE_ADMINS:?set EDGE_ADMINS in .env}
+      # edge apps on GitHub: topic-tagged ones from these owners, plus IoT Open's own apps
+      GITHUB_OWNERS: ${GITHUB_OWNERS:-automateit-se}
+      GITHUB_INCLUDE: ${GITHUB_INCLUDE:-IoTOpen/edge-app-*}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      # the edge sets X-Real-IP from Cloudflare's CF-Connecting-IP (used for the sign-in rate limit)
+      REAL_IP_HEADER: x-real-ip
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks:
+      edge:
+        aliases: [appmanagement]
+      docker:
+    depends_on: [docker-proxy]
+    # ports: ["127.0.0.1:8090:8080"]   # optional: reach it on the host without the edge, e.g. for a first test
+
+  # The Docker API for App Management, limited to containers, images and volumes, on an internal network
+  # that has no internet access and that nothing else is on.
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:${DOCKER_PROXY_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      CONTAINERS: 1
+      IMAGES: 1
+      VOLUMES: 1
+      NETWORKS: 1   # App Management creates the network iotopen-edge on first use
+      POST: 1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [docker]
+
+networks:
+  # created by the edge's install.sh (docker network create edge)
+  edge:
+    name: edge
+    external: true
+  docker:
+    internal: true

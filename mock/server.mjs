@@ -249,6 +249,7 @@ function filesAt(r, ref) {
 
 const containers = new Map(); // id -> container
 const volumes = new Map();
+const networks = new Map([['bridge', { Name: 'bridge', Driver: 'bridge' }]]);
 
 function dockerLogs(c) {
   const t0 = Date.now() - 60_000;
@@ -540,6 +541,15 @@ async function dockerApi(req, res, p, url) {
   if (p === '/images/create' && req.method === 'POST') {
     return send(res, 200, `{"status":"Pulling from ${url.searchParams.get('fromImage')}"}\n{"status":"Status: Image is up to date"}\n`);
   }
+  if ((m = /^\/networks\/([^/]+)$/.exec(p)) && req.method === 'GET') {
+    return networks.has(m[1]) ? send(res, 200, networks.get(m[1])) : send(res, 404, { message: `network ${m[1]} not found` });
+  }
+  if (p === '/networks/create' && req.method === 'POST') {
+    const b = await json(req);
+    if (networks.has(b.Name)) return send(res, 409, { message: 'network with name already exists' });
+    networks.set(b.Name, { Name: b.Name, Id: randomBytes(32).toString('hex'), Driver: b.Driver, Labels: b.Labels || {} });
+    return send(res, 201, { Id: networks.get(b.Name).Id });
+  }
   if (p === '/volumes/create' && req.method === 'POST') {
     const b = await json(req);
     if (!volumes.has(b.Name)) volumes.set(b.Name, { Name: b.Name, Labels: b.Labels || {} });
@@ -563,6 +573,8 @@ async function dockerApi(req, res, p, url) {
     const b = await json(req);
     const id = randomBytes(32).toString('hex');
     const vol = b.HostConfig?.Mounts?.find((x) => x.Target === '/etc/iot-open')?.Source;
+    const net = b.HostConfig?.NetworkMode;
+    if (net && !['bridge', 'host', 'none', 'default'].includes(net) && !networks.has(net)) return send(res, 404, { message: `network ${net} not found` });
     containers.set(id, { Id: id, Name: name, Image: b.Image, Labels: b.Labels || {}, Env: b.Env, HostConfig: b.HostConfig || {}, state: 'created', created: new Date().toISOString(), restarts: 0, config: vol ? volumes.get(vol)?.config : null, vol });
     return send(res, 201, { Id: id, Warnings: [] });
   }
