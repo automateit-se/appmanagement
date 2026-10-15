@@ -177,7 +177,7 @@ function Setup({ iid, onCreated }) {
       <button type="button" className={`btn ${online ? 'danger-solid' : 'primary'}`} disabled={!ok || busy || !p} onClick={create}>
         {busy ? (
           <>
-            <span className="spinner" aria-hidden="true" /> Sätter upp, det kan ta någon minut…
+            <span className="spinner" aria-hidden="true" /> Startar…
           </>
         ) : (
           online ? 'Ersätt och sätt upp edge client' : 'Sätt upp edge client'
@@ -196,14 +196,30 @@ export default function EdgeClient({ installation }) {
   const [removeConfig, setRemoveConfig] = useState(true);
   const [logKey, setLogKey] = useState(0);
   const [presence, reloadPresence] = usePresence(iid, st?.exists ? 20000 : 0);
+  const [jobError, setJobError] = useState(null); // { action, error } of a set-up or update that failed
+  const working = !!st?.job?.running;
 
-  const load = useCallback(() => backend.edgeStatus(iid).then((s) => (setSt(s), setError('')), (e) => setError(errText(e))), [iid]);
+  const accept = useCallback((s) => {
+    setSt(s);
+    // the backend reports a failed job once; keep it on screen until the next action
+    if (s?.job?.error) setJobError({ action: s.job.action, error: s.job.error });
+  }, []);
+  const load = useCallback(() => backend.edgeStatus(iid).then((s) => (accept(s), setError('')), (e) => setError(errText(e))), [iid, accept]);
   useEffect(() => {
     if (!onDefaultServer()) return;
     load();
-    const t = setInterval(load, 10000);
+    // while setting up or updating, follow the progress closely
+    const t = setInterval(load, working ? 2000 : 10000);
     return () => clearInterval(t);
-  }, [load]);
+  }, [load, working]);
+  const wasWorking = useRef(false);
+  useEffect(() => {
+    if (wasWorking.current && !working) {
+      setLogKey((k) => k + 1);
+      setTimeout(reloadPresence, 5000);
+    }
+    wasWorking.current = working;
+  }, [working, reloadPresence]);
 
   if (!onDefaultServer()) {
     return <div className="info-box">Edge clients kan bara hanteras när du är inloggad mot App Managements egen IoT Open-server. Logga ut och välj standardservern.</div>;
@@ -212,8 +228,9 @@ export default function EdgeClient({ installation }) {
   const run = async (what, fn) => {
     setBusy(what);
     setError('');
+    setJobError(null);
     try {
-      setSt(await fn());
+      accept(await fn());
       setLogKey((k) => k + 1);
       setTimeout(reloadPresence, 3000);
     } catch (e) {
@@ -224,11 +241,33 @@ export default function EdgeClient({ installation }) {
     }
   };
 
+  const jobFailed = jobError && (
+    <div className="error-box">
+      {jobError.action === 'create' ? 'Uppsättningen av edge clienten misslyckades' : 'Uppdateringen misslyckades'}: {jobError.error}
+    </div>
+  );
+
+  if (working) {
+    return (
+      <section className="panel">
+        <h2>
+          <Icon name="box" size={18} /> {st.job.action === 'create' ? 'Sätter upp edge client' : 'Uppdaterar edge client'}
+        </h2>
+        <div className="progress">
+          <span className="spinner" aria-hidden="true" />
+          {st.job.step || 'Arbetar…'}
+        </div>
+        <p className="muted small">Det kan ta några minuter första gången, när IoT Opens edge client hämtas. Du kan lämna sidan; arbetet fortsätter.</p>
+      </section>
+    );
+  }
+
   if (st && !st.exists) {
     return (
       <>
         {error && <div className="error-box">{error}</div>}
-        <Setup iid={iid} onCreated={(s) => (setSt(s), setLogKey((k) => k + 1))} />
+        {jobFailed}
+        <Setup iid={iid} onCreated={(s) => (setJobError(null), accept(s))} />
       </>
     );
   }
@@ -237,6 +276,7 @@ export default function EdgeClient({ installation }) {
   return (
     <>
       {error && <div className="error-box">{error}</div>}
+      {jobFailed}
       {!st && !error && <p className="muted">Laddar…</p>}
       {st && (
         <section className="panel">

@@ -53,6 +53,15 @@ after(() => {
   mock.close();
 });
 
+/** Polls an edge client's status until its job (set-up, update) has finished. */
+async function waitJob(path, key = KEY, root = base) {
+  for (let i = 0; i < 100; i++) {
+    const st = await (await fetch(root + path, { headers: { 'X-API-Key': key } })).json();
+    if (!st.job?.running) return st;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  throw new Error('job did not finish');
+}
 const get = (p, key = KEY) => fetch(base + p, { headers: key ? { 'X-API-Key': key } : {} });
 const post = (p, body = {}, key = KEY) => fetch(base + p, { method: 'POST', headers: { 'X-API-Key': key, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 
@@ -174,8 +183,8 @@ test('edge client lifecycle', async () => {
   assert.equal(body.code, 'edge-online');
   assert.equal(body.presence.state, 'online');
   r = await post('/app-api/edge/1002', { confirm: true, replaceOnline: true });
-  assert.equal(r.status, 201);
-  st = await r.json();
+  assert.equal(r.status, 202);
+  st = await waitJob('/app-api/edge/1002');
   assert.equal(st.running, true);
   assert.equal(st.name, 'iotopen-edge-1002');
   assert.equal(JSON.stringify(st).includes('mqtt_password'), false);
@@ -195,7 +204,9 @@ test('edge client lifecycle', async () => {
   assert.equal(st.recentErrors, 1);
   assert.match(st.lastError.text, /connection lost/);
 
-  st = await (await post('/app-api/edge/1002/update')).json();
+  r = await post('/app-api/edge/1002/update');
+  assert.equal(r.status, 202);
+  st = await waitJob('/app-api/edge/1002');
   assert.equal(st.running, true);
   assert.equal(st.restartCount, 0);
   const after = await (await get('/app-api/edge/1002/logs')).json();
@@ -212,7 +223,8 @@ test('edge client lifecycle', async () => {
 test('EDGE_CLIENT_NETWORK is created on first use', async () => {
   const s = await start(envFor({ EDGE_CLIENT_NETWORK: 'iotopen-edge' }));
   const r = await fetch(s.url + '/app-api/edge/1002', { method: 'POST', headers: { 'X-API-Key': KEY }, body: JSON.stringify({ confirm: true, replaceOnline: true }) });
-  assert.equal(r.status, 201);
+  assert.equal(r.status, 202);
+  assert.equal((await waitJob('/app-api/edge/1002', KEY, s.url)).running, true);
   assert.equal((await fetch(`${mockUrl}/docker/networks/iotopen-edge`)).status, 200);
   await fetch(s.url + '/app-api/edge/1002?config=true', { method: 'DELETE', headers: { 'X-API-Key': KEY } });
   s.server.close();
@@ -258,7 +270,8 @@ test('edge status in IoT Open', async () => {
   assert.equal((await fetch(`${s.url}/app-api/presence/4242`, { headers: { 'X-API-Key': KEY } })).status, 404);
   // creating an edge client here brings 5001 online
   const c = await fetch(`${s.url}/app-api/edge/1001`, { method: 'POST', headers: { 'X-API-Key': KEY }, body: JSON.stringify({ confirm: true }) });
-  assert.equal(c.status, 201);
+  assert.equal(c.status, 202);
+  await waitJob('/app-api/edge/1001', KEY, s.url);
   const s2 = await start(envFor());
   const pr2 = async (iid) => (await fetch(`${s2.url}/app-api/presence/${iid}`, { headers: { 'X-API-Key': KEY } })).json();
   assert.equal((await pr2(1001)).state, 'online');

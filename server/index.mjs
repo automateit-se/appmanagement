@@ -117,10 +117,10 @@ export function createApp(cfg, opts = {}) {
               throw new HttpError(409, 'Installationen har redan en edge client som är online i IoT Open. Den kopplas bort om nya credentials skapas.', { code: 'edge-online', presence: pr });
             }
           }
-          return sendJson(res, sub === '' ? 201 : 200, await exclusive(iid, () => (sub === '' ? edge.create(iid, token, user) : edge.renewCredentials(iid, token))));
+          return sendJson(res, sub === '' ? 202 : 200, await exclusive(iid, () => (sub === '' ? edge.create(iid, token, user) : edge.renewCredentials(iid, token))));
         }
         if (['start', 'stop', 'restart'].includes(sub)) return sendJson(res, 200, await exclusive(iid, () => edge.action(iid, sub)));
-        if (sub === 'update') return sendJson(res, 200, await exclusive(iid, () => edge.update(iid, user)));
+        if (sub === 'update') return sendJson(res, 202, await exclusive(iid, () => edge.update(iid, user)));
       }
       throw new HttpError(404, 'Hittades inte');
     }

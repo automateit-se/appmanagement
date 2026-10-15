@@ -88,10 +88,49 @@ export function edgeClients(cfg, docker, lynx) {
     }
   }
 
+  // Setting up and updating can take minutes (pulling the image), longer than a proxy in front waits for an answer
+  // (Cloudflare: about 100 s). They run as jobs: the request answers at once and the status shows the progress.
+  const jobs = new Map(); // installation -> { action, step, error, done, started }
+
+  function runJob(iid, action, steps) {
+    const cur = jobs.get(iid);
+    if (cur && !cur.done) throw new HttpError(409, 'En annan åtgärd pågår redan för den här edge clienten');
+    const job = { action, step: '', error: '', done: false, started: new Date().toISOString() };
+    jobs.set(iid, job);
+    (async () => {
+      try {
+        await steps((text) => (job.step = text));
+      } catch (e) {
+        job.error = e.message || String(e);
+        console.warn(`edge client ${action} for installation ${iid} failed: ${job.error}`);
+      } finally {
+        job.done = true;
+        job.step = '';
+      }
+    })();
+    return job;
+  }
+
+  const jobView = (iid) => {
+    const j = jobs.get(iid);
+    if (!j) return null;
+    if (j.done) jobs.delete(iid); // a finished job (and its error) is reported once
+    if (j.done && !j.error) return null;
+    return { action: j.action, step: j.step, error: j.error, running: !j.done, started: j.started };
+  };
+
   async function status(iid) {
+    const job = jobView(iid);
     const c = await find(iid);
-    if (!c) return { exists: false, image: cfg.edge.image };
-    const info = await docker.json('GET', `/containers/${c.Id}/json`);
+    if (!c) return { exists: false, image: cfg.edge.image, job };
+    let info;
+    try {
+      info = await docker.json('GET', `/containers/${c.Id}/json`);
+    } catch (e) {
+      // removed between the list and the inspect, e.g. while an update replaces it
+      if (e.status === 404) return { exists: false, image: cfg.edge.image, job };
+      throw e;
+    }
     const st = info.State || {};
     let lines = [];
     try {
@@ -118,6 +157,7 @@ export function edgeClients(cfg, docker, lynx) {
       recentErrors: errors.length,
       lastError: errors.length ? errors[errors.length - 1] : null,
       hasConfig: !!(info.Mounts || []).find((m) => m.Destination === '/etc/iot-open'),
+      job,
     };
   }
 
@@ -131,26 +171,35 @@ export function edgeClients(cfg, docker, lynx) {
       return (await docker.logs(c.Id, n)).map((l) => ({ ...l, error: ERROR_LINE.test(l.text) }));
     },
 
+    /** Starts setting up an edge client; the progress is in status().job. */
     async create(iid, token, user) {
       if (await find(iid)) throw new HttpError(409, 'Installationen har redan en edge client här');
-      await pullImage();
-      await docker.json('POST', '/volumes/create', { body: { Name: volumeName(iid), Labels: labels(iid, user) } });
-      const id = await createContainer(iid, user);
-      try {
-        const creds = await lynx.createGatewayCredentials(token, iid);
-        await writeCredentials(id, creds);
-        await docker.json('POST', `/containers/${id}/start`);
-      } catch (e) {
-        // nothing half-made is left behind, in particular no volume holding credentials
-        await docker.json('DELETE', `/containers/${id}`, { query: { force: 'true' } }).catch(() => {});
-        await docker.json('DELETE', `/volumes/${volumeName(iid)}`).catch(() => {});
-        throw e;
-      }
-      return status(iid);
+      const job = runJob(iid, 'create', async (step) => {
+        step('Hämtar IoT Opens edge client…');
+        await pullImage();
+        step('Skapar volym och container…');
+        await docker.json('POST', '/volumes/create', { body: { Name: volumeName(iid), Labels: labels(iid, user) } });
+        const id = await createContainer(iid, user);
+        try {
+          step('Skapar credentials i IoT Open…');
+          const creds = await lynx.createGatewayCredentials(token, iid);
+          await writeCredentials(id, creds);
+          step('Startar edge clienten…');
+          await docker.json('POST', `/containers/${id}/start`);
+        } catch (e) {
+          // nothing half-made is left behind, in particular no volume holding credentials
+          await docker.json('DELETE', `/containers/${id}`, { query: { force: 'true' } }).catch(() => {});
+          await docker.json('DELETE', `/volumes/${volumeName(iid)}`).catch(() => {});
+          throw e;
+        }
+      });
+      // answer from the state before the job: the job is already changing Docker underneath
+      return { exists: false, image: cfg.edge.image, job: { action: job.action, step: job.step, error: '', running: true, started: job.started } };
     },
 
     /** New credentials from IoT Open (e.g. when the old ones were replaced elsewhere), then a restart. */
     async renewCredentials(iid, token) {
+      if (jobs.get(iid) && !jobs.get(iid).done) throw new HttpError(409, 'En annan åtgärd pågår redan för den här edge clienten');
       const c = await must(iid);
       const creds = await lynx.createGatewayCredentials(token, iid);
       await writeCredentials(c.Id, creds);
@@ -159,23 +208,31 @@ export function edgeClients(cfg, docker, lynx) {
     },
 
     async action(iid, what) {
+      if (jobs.get(iid) && !jobs.get(iid).done) throw new HttpError(409, 'En annan åtgärd pågår redan för den här edge clienten');
       const c = await must(iid);
       if (!['start', 'stop', 'restart'].includes(what)) throw new HttpError(400, 'Okänd åtgärd');
       await docker.json('POST', `/containers/${c.Id}/${what}`, { query: what === 'start' ? undefined : { t: 10 }, timeout: 60_000 });
       return status(iid);
     },
 
-    /** Pulls the image again and recreates the container with the same config volume. */
+    /** Pulls the image again and recreates the container with the same config volume (a job, like create). */
     async update(iid, user) {
       const c = await must(iid);
-      await pullImage();
-      await docker.json('DELETE', `/containers/${c.Id}`, { query: { force: 'true' } });
-      const id = await createContainer(iid, user);
-      await docker.json('POST', `/containers/${id}/start`);
-      return status(iid);
+      const before = await status(iid);
+      const job = runJob(iid, 'update', async (step) => {
+        step('Hämtar senaste versionen…');
+        await pullImage();
+        step('Startar om med den nya versionen…');
+        await docker.json('DELETE', `/containers/${c.Id}`, { query: { force: 'true' } });
+        const id = await createContainer(iid, user);
+        await docker.json('POST', `/containers/${id}/start`);
+      });
+      return { ...before, job: { action: job.action, step: job.step, error: '', running: true, started: job.started } };
     },
 
     async remove(iid, removeConfig) {
+      if (jobs.get(iid) && !jobs.get(iid).done) throw new HttpError(409, 'En annan åtgärd pågår redan för den här edge clienten');
+      jobs.delete(iid);
       const c = await must(iid);
       await docker.json('DELETE', `/containers/${c.Id}`, { query: { force: 'true' } });
       if (removeConfig) await docker.json('DELETE', `/volumes/${volumeName(iid)}`).catch((e) => (e.status === 404 ? null : Promise.reject(e)));
