@@ -46,6 +46,8 @@ The mock (`mock/server.mjs`, no dependencies) implements the parts of IoT Open, 
 
 ### Container image
 
+Releases and how to publish one: [docs/releases](docs/releases/README.md).
+
 `.github/workflows/container.yml` runs the tests and builds the image for amd64 and arm64 to GitHub Container Registry:
 
 - a push to `main` gives `ghcr.io/<owner>/<repo>:main` and `:sha-<short>`
