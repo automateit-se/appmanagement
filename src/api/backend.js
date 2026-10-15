@@ -22,9 +22,11 @@ export const backend = {
   /** app.json, app.lua and description of one version, ready to be handed to IoT Open. */
   package: (owner, repo, tag) => call(`catalog/${seg(owner)}/${seg(repo)}/package?tag=${seg(tag)}`),
 
+  /** Edge status in IoT Open: { state: 'online' | 'offline' | 'unknown', since } */
+  presence: (iid) => call(`presence/${iid}`),
   edgeStatus: (iid) => call(`edge/${iid}`),
   edgeLogs: (iid, tail = 200) => call(`edge/${iid}/logs?tail=${tail}`),
-  edgeCreate: (iid) => call(`edge/${iid}`, { method: 'POST', body: { confirm: true } }),
+  edgeCreate: (iid, replaceOnline = false) => call(`edge/${iid}`, { method: 'POST', body: { confirm: true, replaceOnline } }),
   edgeRenew: (iid) => call(`edge/${iid}/credentials`, { method: 'POST', body: { confirm: true } }),
   edgeAction: (iid, action) => call(`edge/${iid}/${action}`, { method: 'POST', body: {} }),
   edgeRemove: (iid, removeConfig) => call(`edge/${iid}?config=${removeConfig ? 'true' : 'false'}`, { method: 'DELETE' }),

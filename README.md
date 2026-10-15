@@ -128,7 +128,14 @@ Creating apps requires that the organization is an edge app publisher in IoT Ope
 3. creates new gateway credentials in IoT Open (`POST /api/v2/gateway/credentials/{installation}`) as the signed-in user and writes the answer as `/etc/iot-open/iotopen.json` (mode 0600) into that volume. The password never reaches the browser.
 4. starts the container `iotopen-edge-<installation>` (`HEADLESS=true`, restart `unless-stopped`, 256 MB memory, log rotation).
 
-IoT Open keeps **one set of credentials per installation**: creating new ones disconnects any other edge client (a Raspberry Pi, a gateway) that uses the old ones. The page asks for confirmation before it does that.
+IoT Open keeps **one set of credentials per installation**: creating new ones disconnects any other edge client (a Raspberry Pi, a gateway) that uses the old ones. Before it does that, App Management checks the installation's **edge status** in IoT Open (what Lynx shows as *Edge status: Online*):
+
+- Every IoT Open edge client is an MQTT bridge configured with `notification_topic <client_id>/box/event/status`, so it publishes a retained `1` when it connects and `0` when it goes away. The backend subscribes to that topic for a moment as the signed-in user (MQTT over WebSocket, `LYNX_URL/mqtt`) and also asks IoT Open's status API.
+- **Online**: the page says clearly that an edge client is online and will be disconnected, the confirmation is worded for that, and the backend refuses (409) unless the request says so explicitly (`replaceOnline`).
+- **Offline**: a warning that the installation has had an edge client that will not be able to reconnect.
+- **Unknown**: no edge client has reported; the general warning about credentials is shown.
+
+The edge status is also shown for the edge client App Management runs (*In IoT Open*, *I IoT Open*: online means it really reached IoT Open) and on the installation's app list.
 
 | Action | What it does |
 |---|---|

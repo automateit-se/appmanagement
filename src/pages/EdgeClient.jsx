@@ -3,6 +3,7 @@ import { backend } from '../api/backend.js';
 import { onDefaultServer, serverLabel } from '../api/server.js';
 import { Icon } from '../components/icons.jsx';
 import { Confirm, errText } from '../components/Modal.jsx';
+import { PresenceBadge, fmtSince, usePresence } from '../components/EdgePresence.jsx';
 
 // IoT Open Docker Edge Client for one installation, run in the same Docker environment as App Management.
 
@@ -89,16 +90,57 @@ function Logs({ iid, refreshKey }) {
   );
 }
 
+/** What IoT Open says about an edge client the installation may already have. */
+function ExistingWarning({ p }) {
+  if (!p) {
+    return (
+      <div className="info-box progress">
+        <span className="spinner" aria-hidden="true" /> Kontrollerar om installationen redan har en edge client i IoT Open…
+      </div>
+    );
+  }
+  if (p.state === 'online') {
+    return (
+      <div className="error-box">
+        <strong>Installationen har redan en edge client som är online.</strong> IoT Open rapporterar Edge status: Online
+        {p.since ? ` sedan ${fmtSince(p.since)}` : ''}. Det kan vara en Raspberry Pi, en gateway eller en annan Docker-värd. Den kopplas bort och slutar fungera om
+        du fortsätter, och apparna flyttar hit.
+      </div>
+    );
+  }
+  if (p.state === 'offline') {
+    return (
+      <div className="warn-box">
+        Installationen har haft en edge client, men den är <strong>offline</strong>
+        {p.since ? ` sedan ${fmtSince(p.since)}` : ''}. När nya credentials skapas kan den inte ansluta igen med de gamla.
+      </div>
+    );
+  }
+  return (
+    <div className="warn-box">
+      Ingen edge client har rapporterat status för installationen. IoT Open har ändå <strong>en uppsättning credentials per installation</strong>: om det finns en edge
+      client som inte är ansluten just nu (till exempel en avstängd Raspberry Pi) slutar den att fungera när nya credentials skapas.
+    </div>
+  );
+}
+
 function Setup({ iid, onCreated }) {
   const [ok, setOk] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [p, reloadPresence, setP] = usePresence(iid, 0);
+  const online = p?.state === 'online';
   const create = async () => {
     setBusy(true);
     setError('');
     try {
-      onCreated(await backend.edgeCreate(iid));
+      onCreated(await backend.edgeCreate(iid, online));
     } catch (e) {
+      // went online while the page was open: show it and ask again
+      if (e.body?.code === 'edge-online') {
+        setP(e.body.presence);
+        setOk(false);
+      }
       setError(errText(e));
     } finally {
       setBusy(false);
@@ -118,21 +160,27 @@ function Setup({ iid, onCreated }) {
         <li>Nya credentials för installationen skapas i IoT Open och sparas i edge clientens egen volym. De visas aldrig i webbläsaren.</li>
         <li>Edge clienten startas och startar om sig själv om Docker-värden startas om.</li>
       </ol>
-      <div className="warn-box">
-        IoT Open har <strong>en uppsättning credentials per installation</strong>. Om installationen redan har en edge client (till exempel en Raspberry Pi eller en gateway)
-        slutar den att fungera när nya credentials skapas.
-      </div>
+      <ExistingWarning p={p} />
+      {p && (
+        <div className="row gap wrap small muted presence-row">
+          Edge status i IoT Open: <PresenceBadge p={p} />
+          <button type="button" className="link-btn small" onClick={() => (setP(null), reloadPresence())}>
+            Kontrollera igen
+          </button>
+        </div>
+      )}
       <label className="check confirm-check">
-        <input type="checkbox" checked={ok} onChange={(e) => setOk(e.target.checked)} /> Jag förstår att befintliga credentials för installationen ersätts
+        <input type="checkbox" checked={ok} disabled={!p} onChange={(e) => setOk(e.target.checked)} />{' '}
+        {online ? 'Jag förstår att edge clienten som är online kopplas bort och ersätts av en här' : 'Jag förstår att befintliga credentials för installationen ersätts'}
       </label>
       {error && <div className="error-box">{error}</div>}
-      <button type="button" className="btn primary" disabled={!ok || busy} onClick={create}>
+      <button type="button" className={`btn ${online ? 'danger-solid' : 'primary'}`} disabled={!ok || busy || !p} onClick={create}>
         {busy ? (
           <>
             <span className="spinner" aria-hidden="true" /> Sätter upp, det kan ta någon minut…
           </>
         ) : (
-          'Sätt upp edge client'
+          online ? 'Ersätt och sätt upp edge client' : 'Sätt upp edge client'
         )}
       </button>
     </section>
@@ -147,6 +195,7 @@ export default function EdgeClient({ installation }) {
   const [confirm, setConfirm] = useState(null); // 'renew' | 'remove' | 'update'
   const [removeConfig, setRemoveConfig] = useState(true);
   const [logKey, setLogKey] = useState(0);
+  const [presence, reloadPresence] = usePresence(iid, st?.exists ? 20000 : 0);
 
   const load = useCallback(() => backend.edgeStatus(iid).then((s) => (setSt(s), setError('')), (e) => setError(errText(e))), [iid]);
   useEffect(() => {
@@ -166,6 +215,7 @@ export default function EdgeClient({ installation }) {
     try {
       setSt(await fn());
       setLogKey((k) => k + 1);
+      setTimeout(reloadPresence, 3000);
     } catch (e) {
       setError(errText(e));
     } finally {
@@ -221,6 +271,12 @@ export default function EdgeClient({ installation }) {
                 </dd>
               </>
             )}
+            <dt>I IoT Open</dt>
+            <dd className="row gap wrap">
+              <PresenceBadge p={presence} />
+              {presence?.state === 'offline' && st.running && <span className="muted small">Containern kör men har inte kontakt med IoT Open. Se loggen.</span>}
+              {presence?.state === 'unknown' && st.running && <span className="muted small">Ingen status från edge clienten ännu.</span>}
+            </dd>
             <dt>Omstarter</dt>
             <dd>{st.restartCount}</dd>
             <dt>Fel i loggen</dt>
@@ -285,7 +341,14 @@ export default function EdgeClient({ installation }) {
       {confirm === 'renew' && (
         <Confirm title="Skapa nya credentials?" confirmText="Skapa nya" danger busy={busy === 'renew'} onClose={() => setConfirm(null)} onConfirm={() => run('renew', () => backend.edgeRenew(iid))}>
           <p>Använd det här om edge clienten inte längre kommer in i IoT Open, till exempel för att credentials har skapats någon annanstans.</p>
-          <div className="warn-box">Alla andra edge clients som använder installationens nuvarande credentials slutar att fungera.</div>
+          <p className="row gap small">
+            Edge status i IoT Open just nu: <PresenceBadge p={presence} />
+          </p>
+          {presence?.state === 'online' && !st.running ? (
+            <div className="error-box">En annan edge client är online för installationen. Den kopplas bort.</div>
+          ) : (
+            <div className="warn-box">Alla andra edge clients som använder installationens nuvarande credentials slutar att fungera.</div>
+          )}
         </Confirm>
       )}
       {confirm === 'remove' && (

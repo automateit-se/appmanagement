@@ -7,6 +7,7 @@ import { demuxLogs, splitImage } from '../server/docker.mjs';
 import { makeTar } from '../server/tar.mjs';
 import { checkOrigin, loadConfig, parseDockerHost } from '../server/config.mjs';
 import { prettyName } from '../server/github.mjs';
+import { parseStatus } from '../server/presence.mjs';
 
 test('version names and ordering', () => {
   assert.equal(versionName('v1.2.0'), '1.2.0');
@@ -228,4 +229,10 @@ test('configuration is validated', () => {
   assert.throws(() => loadConfig({ GITHUB_OWNERS: 'a b' }), /GITHUB_OWNERS/);
   assert.throws(() => loadConfig({ EDGE_CLIENT_IMAGE: 'x;rm -rf' }), /EDGE_CLIENT_IMAGE/);
   assert.throws(() => loadConfig({ CUSTOM_SERVERS: 'yes' }), /true or false/);
+});
+
+test('edge status payloads', () => {
+  for (const v of [1, '1', true, 'online', { value: 1 }, { value: '1', timestamp: 1 }]) assert.equal(parseStatus(v), 'online');
+  for (const v of [0, '0', false, 'offline', { value: 0 }]) assert.equal(parseStatus(v), 'offline');
+  for (const v of [null, '', 'maybe', { msg: 'x' }]) assert.equal(parseStatus(v), null);
 });

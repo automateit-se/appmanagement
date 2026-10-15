@@ -281,6 +281,7 @@ select.compact { width: auto; padding: 4px 8px; font-size: 13px; }
 .panel-head h2 { margin: 0; }
 .steps { padding-left: 20px; margin: 0 0 10px; }
 .steps li { margin-bottom: 4px; }
+.presence-row { margin: 6px 0 0; }
 .confirm-check { margin: 12px 0; align-items: flex-start; }
 .confirm-check input { margin-top: 3px; }
 .state { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; padding: 4px 10px; border-radius: 99px; background: var(--surface-2); color: var(--muted); }
@@ -309,3 +310,5 @@ select.compact { width: auto; padding: 4px 8px; font-size: 13px; }
   .facts dd { margin-bottom: 8px; }
   .log-time { display: none; }
 }
+.info-box.progress, .error-box .state, .info-box .state { vertical-align: middle; }
+.info-box.progress { display: flex; padding: 10px 12px; }

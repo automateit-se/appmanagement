@@ -8,6 +8,7 @@ import { lynxClient, relay, requestToken } from './lynx.mjs';
 import { githubClient } from './github.mjs';
 import { dockerClient } from './docker.mjs';
 import { edgeClients } from './edgeClient.mjs';
+import { presenceChecker } from './presence.mjs';
 
 // App Management backend: serves the built app, relays /api/v2 to IoT Open (API_MODE=proxy), reads edge apps
 // from GitHub and manages IoT Open Docker Edge Clients in the local Docker environment (DOCKER_HOST).
@@ -24,10 +25,11 @@ const TYPES = {
   '.woff2': 'font/woff2',
 };
 
-export function createApp(cfg) {
+export function createApp(cfg, opts = {}) {
   const lynx = lynxClient(cfg);
   const github = githubClient(cfg);
   const edge = cfg.edge.docker ? edgeClients(cfg, dockerClient(cfg.edge.docker), lynx) : null;
+  const presence = presenceChecker(cfg, lynx, opts.presence);
 
   const authLimit = rateLimiter(10, 60_000);
   const catalogLimit = rateLimiter(120, 60_000);
@@ -55,8 +57,8 @@ export function createApp(cfg) {
       const ok = cfg.edge.admins.includes(String(user.id)) || cfg.edge.admins.includes(String(user.email || '').toLowerCase());
       if (!ok) throw new HttpError(403, 'Ditt konto får inte hantera edge clients i App Management (EDGE_ADMINS)');
     }
-    await lynx.installation(token, iid);
-    return { token, user };
+    const inst = await lynx.installation(token, iid);
+    return { token, user, inst };
   }
 
   async function exclusive(iid, fn) {
@@ -82,12 +84,21 @@ export function createApp(cfg) {
       throw new HttpError(404, 'Hittades inte');
     }
 
+    // Edge status in IoT Open (is there an edge client, is it online?) - read only, any user with access
+    if ((m = /^\/app-api\/presence\/(\d{1,12})$/.exec(p))) {
+      if (req.method !== 'GET') throw new HttpError(405, 'Metoden stöds inte');
+      if (!edgeLimit(ip)) throw new HttpError(429, 'För många anrop, vänta en stund');
+      const token = requestToken(req);
+      const inst = await lynx.installation(token, Number(m[1]));
+      return sendJson(res, 200, await presence(token, inst));
+    }
+
     if ((m = /^\/app-api\/edge\/(\d{1,12})(?:\/([a-z-]+))?$/.exec(p))) {
       if (!edge) throw new HttpError(404, 'Hantering av edge clients är inte aktiverad (DOCKER_HOST saknas)');
       if (!edgeLimit(ip)) throw new HttpError(429, 'För många anrop, vänta en stund');
       const iid = Number(m[1]);
       const sub = m[2] || '';
-      const { token, user } = await edgeUser(req, iid);
+      const { token, user, inst } = await edgeUser(req, iid);
       if (req.method === 'GET' && sub === '') return sendJson(res, 200, await edge.status(iid));
       if (req.method === 'GET' && sub === 'logs') return sendJson(res, 200, await edge.logs(iid, url.searchParams.get('tail')));
       if (req.method === 'DELETE' && sub === '') {
@@ -98,6 +109,13 @@ export function createApp(cfg) {
         if (sub === '' || sub === 'credentials') {
           // both replace the installation's gateway credentials in IoT Open - the user must have confirmed that
           if (body.confirm !== true) throw new HttpError(400, 'Bekräftelse saknas');
+          // a new edge client must not silently knock out one that is online in IoT Open right now
+          if (sub === '' && body.replaceOnline !== true) {
+            const pr = await presence(token, inst);
+            if (pr.state === 'online') {
+              throw new HttpError(409, 'Installationen har redan en edge client som är online i IoT Open. Den kopplas bort om nya credentials skapas.', { code: 'edge-online', presence: pr });
+            }
+          }
           return sendJson(res, sub === '' ? 201 : 200, await exclusive(iid, () => (sub === '' ? edge.create(iid, token, user) : edge.renewCredentials(iid, token))));
         }
         if (['start', 'stop', 'restart'].includes(sub)) return sendJson(res, 200, await exclusive(iid, () => edge.action(iid, sub)));

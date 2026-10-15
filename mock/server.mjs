@@ -4,12 +4,13 @@
 //   /api/v2/...        IoT Open (Lynx): sign-in, installations, devices, functions, edge apps, gateway credentials
 //   /github-api/...    GitHub REST API: topic search, repositories, releases, tags
 //   /github-raw/...    raw.githubusercontent.com: app.json, app.lua, README.md per tag
-//   /docker/v1.41/...  Docker Engine API: containers, volumes, images, logs, archive
+//   /docker/...        Docker Engine API: containers, volumes, images, logs, archive
+//   /mqtt              MQTT over WebSocket: retained edge status on <client_id>/box/event/status
 //
 // Logins: demo@example.com / demo, API key demo-api-key, twofa@example.com / demo + code 123456.
 
 import http from 'node:http';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 
 const PORT = Number(process.env.PORT || 8787);
 
@@ -72,6 +73,16 @@ const instances = [{ id: 9001, app_id: 1, installation_id: 1001, version: '1.0.0
 let nextInstanceId = 9002;
 
 const publicApp = ({ versions, ...a }) => a;
+
+// Edge status as the edge client's mosquitto bridge publishes it (retained "1" / "0").
+// "Kontoret" (1002) already has an edge client somewhere that is online; "Demohuset" (1001) has none.
+const retained = new Map([['5002/box/event/status', '1']]);
+const mqttClients = new Set();
+function setEdgeStatus(clientId, online) {
+  const topic = `${clientId}/box/event/status`;
+  retained.set(topic, online ? '1' : '0');
+  for (const c of mqttClients) if (c.authed && c.topics.has(topic)) mqttSend(c, topic, online ? '1' : '0', true);
+}
 
 // ---------------------------------------------------------------- GitHub
 
@@ -260,6 +271,8 @@ async function lynxApi(req, res, p, url) {
     const inst = installations.find((i) => i.id === Number(m[1]));
     if (!inst || !canSee(u, inst.id)) return send(res, 403, { message: 'forbidden' });
     const host = req.headers.host || 'localhost';
+    // the old credentials stop working: an edge client using them drops off (a mock container reconnects on start)
+    if (retained.get(`${inst.client_id}/box/event/status`) === '1') setEdgeStatus(inst.client_id, false);
     return send(res, 200, {
       client_id: inst.client_id, installation_id: inst.id, api: `http://${host}`, aam: `http://${host}`,
       mqtt_broker: `${host.split(':')[0]}:8883`, mqtt_username: `box:${inst.client_id}`, mqtt_password: randomBytes(12).toString('hex'),
@@ -459,28 +472,135 @@ async function dockerApi(req, res, p, url) {
     if (sub === 'start') {
       if (c.state === 'running') return send(res, 304, '');
       Object.assign(c, { state: 'running', startedAt: new Date().toISOString() });
+      if (c.config) setEdgeStatus(c.config.client_id, true);
       return send(res, 204, '');
     }
     if (sub === 'stop') {
       if (c.state !== 'running') return send(res, 304, '');
       Object.assign(c, { state: 'exited', finishedAt: new Date().toISOString() });
+      if (c.config) setEdgeStatus(c.config.client_id, false);
       return send(res, 204, '');
     }
     if (sub === 'restart') {
       Object.assign(c, { state: 'running', startedAt: new Date().toISOString(), restarts: c.restarts + 1 });
+      if (c.config) setEdgeStatus(c.config.client_id, true);
       return send(res, 204, '');
     }
     if (sub === '' && req.method === 'DELETE') {
       if (c.state === 'running' && url.searchParams.get('force') !== 'true') return send(res, 409, { message: 'container is running' });
       containers.delete(c.Id);
+      if (c.config && c.state === 'running') setEdgeStatus(c.config.client_id, false);
       return send(res, 204, '');
     }
   }
   return send(res, 404, { message: 'page not found' });
 }
 
+// ---------------------------------------------------------------- MQTT over WebSocket
+
+function wsSend(socket, bytes) {
+  const len = bytes.length;
+  const head = len < 126 ? Buffer.from([0x82, len]) : Buffer.from([0x82, 126, len >> 8, len & 255]);
+  socket.write(Buffer.concat([head, Buffer.from(bytes)]));
+}
+const mstr = (s) => {
+  const b = Buffer.from(s);
+  return [b.length >> 8, b.length & 255, ...b];
+};
+const mlen = (n) => {
+  const o = [];
+  do {
+    let d = n % 128;
+    n = Math.floor(n / 128);
+    if (n > 0) d |= 128;
+    o.push(d);
+  } while (n > 0);
+  return o;
+};
+function mqttSend(c, topic, text, retain) {
+  const t = mstr(topic);
+  const p = [...Buffer.from(text)];
+  wsSend(c.socket, [retain ? 0x31 : 0x30, ...mlen(t.length + p.length), ...t, ...p]);
+}
+function handleMqtt(c, type, body) {
+  if (type === 1) {
+    // CONNECT: the password is the IoT Open token
+    let o = 10;
+    o += 2 + ((body[o] << 8) | body[o + 1]);
+    o += 2 + ((body[o] << 8) | body[o + 1]);
+    const pl = (body[o] << 8) | body[o + 1];
+    c.authed = tokens.has(body.subarray(o + 2, o + 2 + pl).toString());
+    wsSend(c.socket, [0x20, 2, 0, c.authed ? 0 : 5]);
+  } else if (type === 8) {
+    const rc = [];
+    const fresh = [];
+    for (let o = 2; o < body.length; ) {
+      const l = (body[o] << 8) | body[o + 1];
+      const t = body.subarray(o + 2, o + 2 + l).toString();
+      c.topics.add(t);
+      fresh.push(t);
+      o += 3 + l;
+      rc.push(0);
+    }
+    wsSend(c.socket, [0x90, 2 + rc.length, body[0], body[1], ...rc]);
+    for (const t of fresh) if (retained.has(t)) mqttSend(c, t, retained.get(t), true);
+  } else if (type === 12) wsSend(c.socket, [0xd0, 0]);
+}
+function mqttUpgrade(req, socket) {
+  if (!req.url.startsWith('/mqtt')) return socket.destroy();
+  const accept = createHash('sha1').update(req.headers['sec-websocket-key'] + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
+  socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\nSec-WebSocket-Protocol: mqtt\r\n\r\n`);
+  const c = { socket, topics: new Set(), authed: false };
+  mqttClients.add(c);
+  let wsBuf = Buffer.alloc(0);
+  let mq = Buffer.alloc(0);
+  socket.on('data', (d) => {
+    wsBuf = Buffer.concat([wsBuf, d]);
+    for (;;) {
+      if (wsBuf.length < 2) break;
+      const op = wsBuf[0] & 15;
+      let len = wsBuf[1] & 127;
+      let o = 2;
+      if (len === 126) {
+        if (wsBuf.length < 4) break;
+        len = wsBuf.readUInt16BE(2);
+        o = 4;
+      }
+      if (wsBuf.length < o + 4 + len) break;
+      const mask = wsBuf.subarray(o, o + 4);
+      const data = Buffer.from(wsBuf.subarray(o + 4, o + 4 + len)).map((b, i) => b ^ mask[i % 4]);
+      wsBuf = wsBuf.subarray(o + 4 + len);
+      if (op === 8) return socket.end();
+      if (op !== 2 && op !== 0) continue;
+      mq = Buffer.concat([mq, data]);
+      for (;;) {
+        if (mq.length < 2) break;
+        let mul = 1;
+        let l = 0;
+        let i = 1;
+        let b;
+        do {
+          if (i >= mq.length) {
+            b = -1;
+            break;
+          }
+          b = mq[i++];
+          l += (b & 127) * mul;
+          mul *= 128;
+        } while (b & 128);
+        if (b === -1 || mq.length < i + l) break;
+        handleMqtt(c, mq[0] >> 4, mq.subarray(i, i + l));
+        mq = mq.subarray(i + l);
+      }
+    }
+  });
+  const drop = () => mqttClients.delete(c);
+  socket.on('close', drop);
+  socket.on('error', drop);
+}
+
 export function createMock() {
-  return http.createServer(async (req, res) => {
+  const server = http.createServer(async (req, res) => {
     try {
       const url = new URL(req.url, 'http://localhost');
       const p = url.pathname;
@@ -494,8 +614,10 @@ export function createMock() {
       send(res, 500, { message: e.message });
     }
   });
+  server.on('upgrade', mqttUpgrade);
+  return server;
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  createMock().listen(PORT, () => console.log(`IoT Open + GitHub + Docker mock on :${PORT}  (demo@example.com / demo, API key demo-api-key)`));
+  createMock().listen(PORT, () => console.log(`IoT Open (REST + MQTT) + GitHub + Docker mock on :${PORT}  (demo@example.com / demo, API key demo-api-key)`));
 }

@@ -8,6 +8,7 @@ import { githubRepo, latestVersion } from '../lib/install.js';
 import { Icon } from '../components/icons.jsx';
 import { Confirm, errText } from '../components/Modal.jsx';
 import { InstallDialog } from '../components/InstallDialog.jsx';
+import { PresenceBadge, usePresence } from '../components/EdgePresence.jsx';
 
 /** Latest version available for an IoT Open app: from GitHub when it came from there, else from IoT Open. */
 async function latestFor(app) {
@@ -27,34 +28,48 @@ async function latestFor(app) {
 
 function EdgeHint({ iid }) {
   const [st, setSt] = useState(null);
+  const [p] = usePresence(iid, 0);
+  const local = config.edgeClients && onDefaultServer();
   useEffect(() => {
-    if (!config.edgeClients || !onDefaultServer()) return;
+    if (!local) return;
     backend.edgeStatus(iid).then(setSt, () => setSt(null));
-  }, [iid]);
-  if (!st) return null;
-  if (!st.exists) {
+  }, [iid, local]);
+  if (!onDefaultServer() || !p) return null;
+  const edgeLink = local && (
+    <a className="btn" href={`#/i/${iid}/edge`}>
+      {st?.exists ? 'Visa edge client' : 'Sätt upp edge client'}
+    </a>
+  );
+  if (p.state === 'online') {
     return (
       <div className="info-box row gap wrap">
         <Icon name="box" />
-        <span className="grow">Apparna körs av en edge client som är kopplad till installationen. Har du ingen kan App Management sätta upp en IoT Open Docker Edge Client åt dig.</span>
-        <a className="btn" href={`#/i/${iid}/edge`}>
-          Sätt upp edge client
-        </a>
+        <span className="grow">
+          Edge client: <PresenceBadge p={p} /> {st?.exists ? 'Den körs här i App Management.' : 'Apparna körs av installationens edge client.'}
+        </span>
       </div>
     );
   }
-  if (!st.running) {
+  if (p.state === 'offline') {
     return (
       <div className="warn-box row gap wrap">
         <Icon name="alert" />
-        <span className="grow">Installationens edge client här är inte igång, så apparna körs inte.</span>
-        <a className="btn" href={`#/i/${iid}/edge`}>
-          Visa edge client
-        </a>
+        <span className="grow">
+          Installationens edge client är <strong>offline</strong> i IoT Open, så apparna körs inte just nu.
+          {st?.exists && !st.running ? ' Den finns här men är stoppad.' : ''}
+        </span>
+        {edgeLink}
       </div>
     );
   }
-  return null;
+  if (!local || st?.exists) return null;
+  return (
+    <div className="info-box row gap wrap">
+      <Icon name="box" />
+      <span className="grow">Ingen edge client har rapporterat in för installationen. Apparna körs av en edge client; har du ingen kan App Management sätta upp en IoT Open Docker Edge Client åt dig.</span>
+      {edgeLink}
+    </div>
+  );
 }
 
 export default function InstalledApps({ installation }) {

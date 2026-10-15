@@ -137,7 +137,13 @@ test('edge client lifecycle', async () => {
   assert.equal(st.exists, false);
 
   assert.equal((await post('/app-api/edge/1002', {})).status, 400); // not confirmed
+  // "Kontoret" already has an edge client that is online in IoT Open: not replaced without saying so
   let r = await post('/app-api/edge/1002', { confirm: true });
+  assert.equal(r.status, 409);
+  const body = await r.json();
+  assert.equal(body.code, 'edge-online');
+  assert.equal(body.presence.state, 'online');
+  r = await post('/app-api/edge/1002', { confirm: true, replaceOnline: true });
   assert.equal(r.status, 201);
   st = await r.json();
   assert.equal(st.running, true);
@@ -202,4 +208,24 @@ test('BASE_PATH and API_MODE=direct', async () => {
   assert.equal((await fetch(s.url + '/')).status, 404);
   assert.equal((await fetch(s.url + '/healthz')).status, 200);
   s.server.close();
+});
+
+test('edge status in IoT Open', async () => {
+  // a fresh backend, so nothing is cached from the other tests
+  const s = await start(envFor());
+  const pr = async (iid) => (await fetch(`${s.url}/app-api/presence/${iid}`, { headers: { 'X-API-Key': KEY } })).json();
+  assert.deepEqual(await pr(1001), { state: 'unknown', reason: 'no-message', topic: '5001/box/event/status' });
+  assert.equal((await fetch(`${s.url}/app-api/presence/1001`)).status, 401);
+  assert.equal((await fetch(`${s.url}/app-api/presence/4242`, { headers: { 'X-API-Key': KEY } })).status, 404);
+  // creating an edge client here brings 5001 online
+  const c = await fetch(`${s.url}/app-api/edge/1001`, { method: 'POST', headers: { 'X-API-Key': KEY }, body: JSON.stringify({ confirm: true }) });
+  assert.equal(c.status, 201);
+  const s2 = await start(envFor());
+  const pr2 = async (iid) => (await fetch(`${s2.url}/app-api/presence/${iid}`, { headers: { 'X-API-Key': KEY } })).json();
+  assert.equal((await pr2(1001)).state, 'online');
+  await fetch(`${s2.url}/app-api/edge/1001/stop`, { method: 'POST', headers: { 'X-API-Key': KEY } });
+  const s3 = await start(envFor());
+  assert.equal((await (await fetch(`${s3.url}/app-api/presence/1001`, { headers: { 'X-API-Key': KEY } })).json()).state, 'offline');
+  await fetch(`${s3.url}/app-api/edge/1001?config=true`, { method: 'DELETE', headers: { 'X-API-Key': KEY } });
+  for (const x of [s, s2, s3]) x.server.close();
 });
