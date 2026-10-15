@@ -6,7 +6,7 @@ import { ensureGithubVersion, githubRepo, latestVersion, normUrl } from '../src/
 import { demuxLogs, splitImage } from '../server/docker.mjs';
 import { makeTar } from '../server/tar.mjs';
 import { checkOrigin, loadConfig, parseDockerHost } from '../server/config.mjs';
-import { prettyName } from '../server/github.mjs';
+import { parseInclude, prettyName, readManifest } from '../server/github.mjs';
 import { parseStatus } from '../server/presence.mjs';
 
 test('version names and ordering', () => {
@@ -106,6 +106,16 @@ test('github urls', () => {
   assert.equal(normUrl('https://GitHub.com/A/B/'), 'https://github.com/a/b');
   assert.equal(latestVersion([{ name: '1.0.0' }, { name: '' }, { name: '1.2.0' }]).name, '1.2.0');
   assert.equal(prettyName('temperature-alarm'), 'Temperature alarm');
+  assert.equal(prettyName('edge-app-share-data'), 'Share data');
+  const inc = parseInclude('IoTOpen/edge-app-*');
+  assert.ok(inc.test('edge-app-visitscounter') && inc.test('Edge-App-X') && !inc.test('docker-edge-client'));
+  assert.equal(inc.prefix, 'edge-app-');
+  assert.ok(parseInclude('owner/one-repo').test('one-repo'));
+  assert.equal(parseInclude('not a pattern'), null);
+  assert.deepEqual(readManifest('{"name":"Data share","category":"share","description":"","tags":["a",1],"publisher":{"id":1}}'), {
+    name: 'Data share', category: 'share', short_description: undefined, description: undefined, tags: ['a'],
+  });
+  assert.equal(readManifest('{ "publisher": { "id": x } }'), null, 'invalid JSON (seen in the wild) is ignored');
 });
 
 function fakeLynx({ apps = [], publisher = { id: 77 }, versions = {}, uploadAnswer = 'hash' } = {}) {
@@ -249,6 +259,9 @@ test('configuration is validated', () => {
   assert.throws(() => loadConfig({ GITHUB_OWNERS: 'a b' }), /GITHUB_OWNERS/);
   assert.throws(() => loadConfig({ EDGE_CLIENT_IMAGE: 'x;rm -rf' }), /EDGE_CLIENT_IMAGE/);
   assert.throws(() => loadConfig({ CUSTOM_SERVERS: 'yes' }), /true or false/);
+  assert.deepEqual(c.github.include, ['IoTOpen/edge-app-*']);
+  assert.deepEqual(loadConfig({ GITHUB_INCLUDE: '' }).github.include, []);
+  assert.throws(() => loadConfig({ GITHUB_INCLUDE: 'x/../y' }), /GITHUB_INCLUDE/);
 });
 
 test('edge status payloads', () => {

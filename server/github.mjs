@@ -1,26 +1,65 @@
 import { HttpError, ttlCache } from './http.mjs';
 import { sortVersionsDesc, versionName } from '../shared/version.js';
 
-// Edge apps on GitHub. A repository is an edge app for App Management when it
-//   - has the topic GITHUB_TOPIC (default "iotopen-edge-app"),
-//   - has app.lua and app.json in the root, and
-//   - has at least one release (or tag): each release is a version in IoT Open.
-// Name, short description, description (README.md) and tags come from the repository itself, so nothing has
-// to be written by hand in IoT Open. Only public data is read; GITHUB_TOKEN only raises GitHub's rate limit.
+// Edge apps on GitHub. A repository is an edge app for App Management when it has app.lua and app.json in the
+// root and either
+//   - has the topic GITHUB_TOPIC (default "iotopen-edge-app"), or
+//   - matches GITHUB_INCLUDE ("owner/repo" or "owner/prefix-*", default "IoTOpen/edge-app-*": IoT Open's own apps).
+//
+// What IoT Open needs to know about the app comes from the repository, so nothing is typed in by hand:
+//   - edge-app.json (or edge_app.json), IoT Open's own convention: name, category, short_description,
+//     description, tags. Its publisher, public and source_url are not used (App Management sets them).
+//   - otherwise the repository: name (without "edge-app-"), description, topics and README.md.
+// Versions: every release (or tag) is a version, "v1.2.0" -> "1.2.0". A repository without releases or tags gets
+// one version from the latest commit on its default branch ("commit-20250603-abc1234"), so it still installs.
+// Only public data is read; GITHUB_TOKEN only raises GitHub's rate limit.
 
 const NAME = /^[A-Za-z0-9-]{1,39}$/;
 const REPO = /^[A-Za-z0-9._-]{1,100}$/;
 const TAG = /^[A-Za-z0-9._\/-]{1,100}$/;
 const MAX_FILE = 512 * 1024;
 const MAX_README = 20000;
+const MANIFESTS = ['edge-app.json', 'edge_app.json'];
 
 export const prettyName = (repo) => {
-  const s = String(repo).replace(/[-_]+/g, ' ').trim();
+  const s = String(repo)
+    .replace(/^edge[-_]?app[-_]/i, '')
+    .replace(/[-_]+/g, ' ')
+    .trim();
   return s.charAt(0).toUpperCase() + s.slice(1);
 };
 
+/** "IoTOpen/edge-app-*" -> { owner, test(repoName) } */
+export function parseInclude(entry) {
+  const m = /^([A-Za-z0-9-]{1,39})\/([A-Za-z0-9._*-]{1,100})$/.exec(String(entry).trim());
+  if (!m) return null;
+  const pattern = m[2];
+  const re = new RegExp('^' + pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$', 'i');
+  return { owner: m[1], pattern, wildcard: pattern.includes('*'), test: (name) => re.test(name), prefix: pattern.split('*')[0] };
+}
+
+/** Manifest fields IoT Open's edge app object has, cleaned. Anything else is ignored. */
+export function readManifest(text) {
+  let m;
+  try {
+    m = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!m || typeof m !== 'object' || Array.isArray(m)) return null;
+  const str = (v, n) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, n) : undefined);
+  return {
+    name: str(m.name, 100),
+    category: str(m.category, 50),
+    short_description: str(m.short_description, 250),
+    description: str(m.description, MAX_README),
+    tags: Array.isArray(m.tags) ? m.tags.filter((t) => typeof t === 'string' && t.trim()).map((t) => t.trim().slice(0, 50)).slice(0, 20) : undefined,
+  };
+}
+
 export function githubClient(cfg) {
   const gh = cfg.github;
+  const includes = gh.include.map(parseInclude).filter(Boolean);
   const headers = {
     Accept: 'application/vnd.github+json',
     'User-Agent': 'appmanagement',
@@ -49,47 +88,100 @@ export function githubClient(cfg) {
     return buf.toString('utf8');
   }
 
-  const trusted = (owner) => !gh.owners.length || gh.owners.some((o) => o.toLowerCase() === String(owner).toLowerCase());
+  const included = (owner, repo) => includes.some((i) => i.owner.toLowerCase() === String(owner).toLowerCase() && i.test(repo));
+  const ownerTrusted = (owner) => !gh.owners.length || gh.owners.some((o) => o.toLowerCase() === String(owner).toLowerCase());
+  /** Listed repositories: included explicitly, or carrying the topic from a trusted owner. */
+  const allowed = (r) => !r.archived && (included(r.owner?.login, r.name) || ((r.topics || []).includes(gh.topic) && ownerTrusted(r.owner?.login)));
 
-  const summary = (r) => ({
+  const raw = (owner, repo, ref, file) => `${gh.rawUrl}/${owner}/${repo}/${encodeURIComponent(ref).replace(/%2F/g, '/')}/${file}`;
+
+  async function manifest(owner, repo, ref) {
+    for (const f of MANIFESTS) {
+      const text = await get(raw(owner, repo, ref, f), { raw: true, optional: true });
+      if (text !== null) return readManifest(text);
+    }
+    return null;
+  }
+
+  const summary = (r, man) => ({
     id: r.full_name,
     owner: r.owner?.login,
     repo: r.name,
-    name: prettyName(r.name),
-    description: r.description || '',
-    topics: (r.topics || []).filter((t) => t !== gh.topic),
+    name: man?.name || prettyName(r.name),
+    description: man?.short_description || r.description || '',
+    topics: man?.tags || (r.topics || []).filter((t) => t !== gh.topic),
     stars: r.stargazers_count || 0,
     updated: r.pushed_at || r.updated_at || null,
     url: r.html_url,
-    license: r.license?.spdx_id || null,
+    license: r.license?.spdx_id && r.license.spdx_id !== 'NOASSERTION' ? r.license.spdx_id : null,
     archived: !!r.archived,
+    defaultBranch: r.default_branch || 'main',
   });
 
   function checkNames(owner, repo) {
     if (!NAME.test(owner) || !REPO.test(repo)) throw new HttpError(400, 'Ogiltigt repositorynamn');
-    if (!trusted(owner)) throw new HttpError(404, 'Repositoryt är inte godkänt i den här installationen av App Management');
   }
 
   const listCache = ttlCache(5 * 60_000, 10);
   const detailCache = ttlCache(5 * 60_000, 200);
   const packageCache = ttlCache(60 * 60_000, 200);
 
+  /** Map with limited concurrency (GitHub does not like bursts). */
+  async function mapLimit(list, n, fn) {
+    const out = new Array(list.length);
+    let i = 0;
+    await Promise.all(
+      Array.from({ length: Math.min(n, list.length) }, async () => {
+        while (i < list.length) {
+          const k = i++;
+          out[k] = await fn(list[k]);
+        }
+      }),
+    );
+    return out;
+  }
+
   async function catalog() {
     return listCache('all', async () => {
-      const q = [`topic:${gh.topic}`, 'archived:false', ...gh.owners.map((o) => `user:${o}`)].join(' ');
-      const res = await get(`${gh.apiUrl}/search/repositories?q=${encodeURIComponent(q)}&sort=updated&per_page=100`);
-      return (res.items || []).filter((r) => trusted(r.owner?.login)).map(summary);
+      const found = new Map();
+      const add = (r) => r && allowed(r) && found.set(r.full_name.toLowerCase(), r);
+      const topicQuery = [`topic:${gh.topic}`, 'archived:false', ...gh.owners.map((o) => `user:${o}`)].join(' ');
+      const searches = [get(`${gh.apiUrl}/search/repositories?q=${encodeURIComponent(topicQuery)}&sort=updated&per_page=100`)];
+      for (const inc of includes) {
+        if (inc.wildcard) {
+          const q = [`user:${inc.owner}`, 'archived:false', ...(inc.prefix ? [`${inc.prefix} in:name`] : [])].join(' ');
+          searches.push(get(`${gh.apiUrl}/search/repositories?q=${encodeURIComponent(q)}&per_page=100`));
+        } else {
+          searches.push(get(`${gh.apiUrl}/repos/${inc.owner}/${inc.pattern}`, { optional: true }).then((r) => (r ? { items: [r] } : { items: [] })));
+        }
+      }
+      for (const res of await Promise.all(searches.map((p) => p.catch((e) => ({ error: e, items: [] }))))) {
+        if (res.error && searches.length === 1) throw res.error;
+        (res.items || []).forEach(add);
+      }
+      const repos = [...found.values()];
+      const mans = await mapLimit(repos, 6, (r) => manifest(r.owner.login, r.name, r.default_branch || 'main').catch(() => null));
+      return repos.map((r, i) => summary(r, mans[i])).sort((a, b) => a.name.localeCompare(b.name, 'sv'));
     });
   }
 
-  async function versions(owner, repo) {
-    const rel = await get(`${gh.apiUrl}/repos/${owner}/${repo}/releases?per_page=50`);
+  async function versions(r) {
+    const owner = r.owner.login;
+    const rel = await get(`${gh.apiUrl}/repos/${owner}/${r.name}/releases?per_page=50`);
     let list = (rel || [])
-      .filter((r) => !r.draft && (gh.prereleases || !r.prerelease) && TAG.test(r.tag_name || ''))
-      .map((r) => ({ tag: r.tag_name, name: versionName(r.tag_name), published: r.published_at, notes: String(r.body || '').slice(0, 4000), prerelease: !!r.prerelease }));
+      .filter((x) => !x.draft && (gh.prereleases || !x.prerelease) && TAG.test(x.tag_name || '') && !x.tag_name.includes('..'))
+      .map((x) => ({ tag: x.tag_name, name: versionName(x.tag_name), published: x.published_at, notes: String(x.body || '').slice(0, 4000), prerelease: !!x.prerelease }));
     if (!list.length) {
-      const tags = await get(`${gh.apiUrl}/repos/${owner}/${repo}/tags?per_page=50`);
-      list = (tags || []).filter((t) => TAG.test(t.name || '')).map((t) => ({ tag: t.name, name: versionName(t.name), published: null, notes: '', prerelease: false }));
+      const tags = await get(`${gh.apiUrl}/repos/${owner}/${r.name}/tags?per_page=50`);
+      list = (tags || []).filter((t) => TAG.test(t.name || '') && !t.name.includes('..')).map((t) => ({ tag: t.name, name: versionName(t.name), published: null, notes: '', prerelease: false }));
+    }
+    if (!list.length) {
+      // no releases: the latest commit on the default branch is the version
+      const c = await get(`${gh.apiUrl}/repos/${owner}/${r.name}/commits/${encodeURIComponent(r.default_branch || 'main')}`);
+      const date = String(c?.commit?.committer?.date || c?.commit?.author?.date || '').slice(0, 10).replace(/-/g, '');
+      if (c?.sha) {
+        list = [{ tag: c.sha, name: `commit-${date || '0'}-${c.sha.slice(0, 7)}`, published: c.commit?.committer?.date || null, notes: String(c.commit?.message || '').slice(0, 1000), prerelease: false, unreleased: true }];
+      }
     }
     return sortVersionsDesc(list, (v) => v.name);
   }
@@ -98,11 +190,11 @@ export function githubClient(cfg) {
     checkNames(owner, repo);
     return detailCache(`${owner}/${repo}`.toLowerCase(), async () => {
       const r = await get(`${gh.apiUrl}/repos/${owner}/${repo}`);
-      if (!(r.topics || []).includes(gh.topic)) throw new HttpError(404, `Repositoryt saknar topic ${gh.topic}`);
-      if (!trusted(r.owner?.login)) throw new HttpError(404, 'Repositoryt är inte godkänt i den här installationen av App Management');
-      const vs = await versions(r.owner.login, r.name);
-      const readme = vs.length ? await get(`${gh.rawUrl}/${r.owner.login}/${r.name}/${vs[0].tag}/README.md`, { raw: true, optional: true }) : null;
-      return { ...summary(r), versions: vs, readme: readme ? readme.slice(0, MAX_README) : '' };
+      if (!allowed(r)) throw new HttpError(404, `Repositoryt är inte en edge app för App Management (topic ${gh.topic} eller GITHUB_INCLUDE)`);
+      const vs = await versions(r);
+      const ref = vs[0]?.tag || r.default_branch || 'main';
+      const [readme, man] = await Promise.all([get(raw(r.owner.login, r.name, ref, 'README.md'), { raw: true, optional: true }), manifest(r.owner.login, r.name, ref).catch(() => null)]);
+      return { ...summary(r, man), versions: vs, readme: (readme || man?.description || '').slice(0, MAX_README) };
     });
   }
 
@@ -113,23 +205,23 @@ export function githubClient(cfg) {
     const v = d.versions.find((x) => x.tag === tag);
     if (!v) throw new HttpError(404, `Versionen ${tag} finns inte på GitHub`);
     return packageCache(`${d.id}@${tag}`.toLowerCase(), async () => {
-      const base = `${gh.rawUrl}/${d.owner}/${d.repo}/${encodeURIComponent(tag).replace(/%2F/g, '/')}`;
-      const [appJsonText, appLua, readme] = await Promise.all([
-        get(`${base}/app.json`, { raw: true, optional: true }),
-        get(`${base}/app.lua`, { raw: true, optional: true }),
-        get(`${base}/README.md`, { raw: true, optional: true }),
+      const [appJsonText, appLua, readme, man] = await Promise.all([
+        get(raw(d.owner, d.repo, tag, 'app.json'), { raw: true, optional: true }),
+        get(raw(d.owner, d.repo, tag, 'app.lua'), { raw: true, optional: true }),
+        get(raw(d.owner, d.repo, tag, 'README.md'), { raw: true, optional: true }),
+        manifest(d.owner, d.repo, tag).catch(() => null),
       ]);
       if (appJsonText === null || appLua === null) {
-        throw new HttpError(422, `Versionen ${tag} av ${d.id} saknar app.json eller app.lua i roten och kan inte installeras`);
+        throw new HttpError(422, `Versionen ${v.name} av ${d.id} saknar app.json eller app.lua i roten och kan inte installeras`);
       }
       let appJson;
       try {
         appJson = JSON.parse(appJsonText);
       } catch {
-        throw new HttpError(422, `app.json i ${d.id} ${tag} är inte giltig JSON`);
+        throw new HttpError(422, `app.json i ${d.id} ${v.name} är inte giltig JSON`);
       }
-      if (!appJson || typeof appJson !== 'object' || Array.isArray(appJson)) throw new HttpError(422, `app.json i ${d.id} ${tag} är inte ett JSON-objekt`);
-      const name = typeof appJson.name === 'string' && appJson.name.trim() ? appJson.name.trim().slice(0, 100) : d.name;
+      if (!appJson || typeof appJson !== 'object' || Array.isArray(appJson)) throw new HttpError(422, `app.json i ${d.id} ${v.name} är inte ett JSON-objekt`);
+      const name = man?.name || (typeof appJson.name === 'string' && appJson.name.trim() ? appJson.name.trim().slice(0, 100) : d.name);
       return {
         id: d.id,
         tag,
@@ -138,15 +230,15 @@ export function githubClient(cfg) {
         appLua,
         meta: {
           name,
-          short_description: (d.description || name).slice(0, 250),
-          description: (readme || d.description || '').slice(0, MAX_README),
-          tags: d.topics.slice(0, 20),
-          category: typeof appJson.category === 'string' && appJson.category ? appJson.category : 'other',
+          short_description: (man?.short_description || d.description || name).slice(0, 250),
+          description: (man?.description || readme || d.description || '').slice(0, MAX_README),
+          tags: man?.tags || d.topics.slice(0, 20),
+          category: man?.category || (typeof appJson.category === 'string' && appJson.category ? appJson.category : 'other'),
           source_url: d.url,
         },
       };
     });
   }
 
-  return { catalog, details, package: pkg, trusted };
+  return { catalog, details, package: pkg };
 }

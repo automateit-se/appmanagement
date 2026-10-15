@@ -68,8 +68,15 @@ const edgeApps = [
       { name: '1.1.0', hash: hash(), timestamp: now() - 86400 * 20, app_json: JSON.stringify(weatherJson), app_lua: '-- weather 1.1.0\n' },
     ],
   },
+  {
+    // the same app as example-vendor/edge-app-door-counter on GitHub, published by its vendor without source_url
+    id: 2, name: 'Door counter', category: 'counter', tags: ['counter'], short_description: 'Counts door openings',
+    description: '# Door counter', publisher: { id: 1, name: 'IoT Open' }, official: true, public: true, source_url: '',
+    created: now() - 86400 * 50, updated: now() - 86400 * 50,
+    versions: [{ name: '1.0.0', hash: hash(), timestamp: now() - 86400 * 50, app_json: JSON.stringify({ input: {}, guide: [] }), app_lua: '-- door counter 1.0.0\n' }],
+  },
 ];
-let nextAppId = 2;
+let nextAppId = 3;
 const instances = [{ id: 9001, app_id: 1, installation_id: 1001, version: '1.0.0', name: 'Väderdata', config: { city: 'Stockholm', interval: 30 }, created: now() - 86400 * 100, updated: now() - 86400 * 100 }];
 let nextInstanceId = 9002;
 
@@ -164,6 +171,39 @@ const repos = {
       },
     },
   },
+  // Like IoT Open's own edge apps: no topic, no releases or tags, branch "master", metadata in edge-app.json.
+  // Listed through GITHUB_INCLUDE=example-vendor/edge-app-*.
+  'example-vendor/edge-app-door-counter': {
+    description: 'Edge app counting door openings',
+    topics: [],
+    defaultBranch: 'master',
+    readme: '# Door counter\n\nCounts how many times a door has been opened, per day and in total.\n',
+    manifest: {
+      category: 'counter',
+      description: '# Door counter\n\nCounts door openings per day and in total. The count can be reset.',
+      name: 'Door counter',
+      public: true,
+      publisher: { id: 1 },
+      short_description: 'Counts door openings',
+      source_url: '',
+      tags: ['counter', 'door'],
+    },
+    head: { sha: 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678', date: '2026-08-27T09:00:00Z', message: 'Reset at midnight' },
+    releases: {},
+    branchFiles: {
+      json: {
+        author: 'Example Vendor',
+        licence: 'MIT',
+        input: {
+          doors: { type: 'multi_function_selector', name: 'Doors', description: 'Doors to count', required: true, filter: { type: ['door', 'switch'] } },
+          reset: { type: 'toggle', name: 'Reset at midnight', default: true, true_value: 'Ja', false_value: 'Nej' },
+        },
+        guide: [{ id: 'stage_1', title: 'Doors', description: '', input_fields: ['doors', 'reset'] }],
+      },
+      lua: '-- door counter (master)\n',
+    },
+  },
+  'example-vendor/not-an-app': { description: 'Not matching the include pattern', topics: [], defaultBranch: 'master', readme: '', releases: {} },
   'example-org/broken-app': {
     description: 'Saknar app.lua och kan därför inte installeras',
     topics: ['iotopen-edge-app'],
@@ -176,10 +216,21 @@ const ghRepo = (full) => {
   const [owner, name] = full.split('/');
   const r = repos[full];
   return {
-    full_name: full, name, owner: { login: owner }, description: r.description, topics: r.topics,
+    full_name: full, name, owner: { login: owner }, description: r.description, topics: r.topics, default_branch: r.defaultBranch || 'main',
     html_url: `https://github.com/${full}`, stargazers_count: 3, pushed_at: '2026-09-15T10:00:00Z', archived: false, license: { spdx_id: 'MIT' },
   };
 };
+
+/** Files of a repository at a ref: a release tag, the default branch or the head commit. */
+function filesAt(r, ref) {
+  if (r.releases[ref]) return { ...r.releases[ref], manifest: r.manifest };
+  if (ref === (r.defaultBranch || 'main') || ref === r.head?.sha) {
+    if (r.branchFiles) return { ...r.branchFiles, manifest: r.manifest };
+    const last = Object.values(r.releases).at(-1);
+    return last ? { ...last, manifest: r.manifest } : null;
+  }
+  return null;
+}
 
 // ---------------------------------------------------------------- Docker
 
@@ -426,10 +477,18 @@ function githubApi(req, res, p, url) {
     const q = url.searchParams.get('q') || '';
     const topic = /topic:(\S+)/.exec(q)?.[1];
     const owners = [...q.matchAll(/user:(\S+)/g)].map((x) => x[1].toLowerCase());
+    const inName = /(\S+) in:name/.exec(q)?.[1]?.toLowerCase();
     const items = Object.keys(repos)
-      .filter((k) => repos[k].topics.includes(topic) && (!owners.length || owners.includes(k.split('/')[0].toLowerCase())))
+      .filter((k) => (!topic || repos[k].topics.includes(topic)) && (!owners.length || owners.includes(k.split('/')[0].toLowerCase())))
+      .filter((k) => !inName || k.split('/')[1].toLowerCase().includes(inName))
       .map(ghRepo);
     return send(res, 200, { total_count: items.length, items });
+  }
+  if ((m = /^\/github-api\/repos\/([^/]+)\/([^/]+)\/commits\/([^/]+)$/.exec(p))) {
+    const r = repos[`${m[1]}/${m[2]}`];
+    if (!r || decodeURIComponent(m[3]) !== (r.defaultBranch || 'main')) return send(res, 404, { message: 'Not Found' });
+    const h = r.head || { sha: 'f'.repeat(40), date: '2026-09-15T10:00:00Z', message: '' };
+    return send(res, 200, { sha: h.sha, commit: { message: h.message, committer: { date: h.date } } });
   }
   if ((m = /^\/github-api\/repos\/([^/]+)\/([^/]+)(?:\/(releases|tags))?$/.exec(p))) {
     const full = `${m[1]}/${m[2]}`;
@@ -442,12 +501,18 @@ function githubApi(req, res, p, url) {
     }
     return send(res, 200, tags.map(([tag]) => ({ name: tag })).reverse());
   }
-  if ((m = /^\/github-raw\/([^/]+)\/([^/]+)\/(.+)\/(app\.json|app\.lua|README\.md)$/.exec(p))) {
+  if ((m = /^\/github-raw\/([^/]+)\/([^/]+)\/(.+)\/(app\.json|app\.lua|README\.md|edge-app\.json|edge_app\.json)$/.exec(p))) {
     const r = repos[`${m[1]}/${m[2]}`];
-    const rel = r?.releases[decodeURIComponent(m[3])];
-    if (!rel) return send(res, 404, '404: Not Found');
-    const content = m[4] === 'app.json' ? JSON.stringify(rel.json, null, 2) : m[4] === 'app.lua' ? rel.lua : r.readme;
-    return content === null || content === '' ? send(res, 404, '404: Not Found') : send(res, 200, content);
+    const f = r && filesAt(r, decodeURIComponent(m[3]));
+    if (!f) return send(res, 404, '404: Not Found');
+    const content = {
+      'app.json': f.json ? JSON.stringify(f.json, null, 2) : null,
+      'app.lua': f.lua,
+      'README.md': r.readme,
+      'edge-app.json': f.manifest ? JSON.stringify(f.manifest, null, 2) : null,
+      'edge_app.json': null,
+    }[m[4]];
+    return content === null || content === undefined || content === '' ? send(res, 404, '404: Not Found') : send(res, 200, content);
   }
   return send(res, 404, { message: 'Not Found' });
 }

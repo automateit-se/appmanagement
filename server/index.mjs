@@ -47,6 +47,7 @@ export function createApp(cfg, opts = {}) {
     edgeClients: String(!!edge),
     githubTopic: cfg.github.topic,
     githubOwners: cfg.github.owners,
+    githubInclude: cfg.github.include,
   });
 
   /** Signed-in user allowed to manage edge clients for this installation. */
@@ -211,7 +212,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   server.requestTimeout = 20 * 60_000; // pulling the edge client image can take a while
   server.listen(cfg.port, () => {
     console.log(`App Management on :${cfg.port}${cfg.basePath || ''}  LYNX_URL=${cfg.lynxUrl}  API_MODE=${cfg.apiMode}`);
-    console.log(`  GitHub topic: ${cfg.github.topic}${cfg.github.owners.length ? `  owners: ${cfg.github.owners.join(',')}` : '  (all owners)'}`);
+    console.log(`  GitHub topic: ${cfg.github.topic}${cfg.github.owners.length ? `  owners: ${cfg.github.owners.join(',')}` : '  (all owners)'}${cfg.github.include.length ? `  include: ${cfg.github.include.join(',')}` : ''}`);
     console.log(`  Edge clients: ${cfg.edge.docker ? `on, image ${cfg.edge.image}` : 'off (no DOCKER_HOST)'}`);
   });
   const stop = () => server.close(() => process.exit(0));

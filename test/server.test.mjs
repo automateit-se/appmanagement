@@ -30,6 +30,7 @@ const envFor = (extra = {}) => ({
   ALLOW_INSECURE_LYNX_URL: 'true',
   GITHUB_API_URL: `${mockUrl}/github-api`,
   GITHUB_RAW_URL: `${mockUrl}/github-raw`,
+  GITHUB_INCLUDE: 'example-vendor/edge-app-*',
   DOCKER_HOST: `tcp://127.0.0.1:${new URL(mockUrl).port}/docker`,
   STATIC_DIR: staticDir,
   ...extra,
@@ -97,7 +98,7 @@ test('rate limits sign-in attempts', async () => {
 
 test('catalog from GitHub', async () => {
   const list = await (await get('/app-api/catalog', null)).json();
-  assert.deepEqual(list.map((r) => r.id).sort(), ['example-org/broken-app', 'example-org/energy-report', 'example-org/light-control', 'example-org/temperature-alarm']);
+  assert.deepEqual(list.map((r) => r.id).sort(), ['example-org/broken-app', 'example-org/energy-report', 'example-org/light-control', 'example-org/temperature-alarm', 'example-vendor/edge-app-door-counter']);
   assert.ok(!list[0].topics.includes('iotopen-edge-app'));
 
   const d = await (await get('/app-api/catalog/example-org/temperature-alarm')).json();
@@ -120,12 +121,41 @@ test('catalog from GitHub', async () => {
   assert.equal((await get('/app-api/catalog/bad%20owner/x')).status, 400);
 });
 
-test('GITHUB_OWNERS limits the catalog', async () => {
+test('IoT Open style repository: no topic, no releases, edge-app.json', async () => {
+  const list = await (await get('/app-api/catalog')).json();
+  const item = list.find((r) => r.id === 'example-vendor/edge-app-door-counter');
+  assert.equal(item.name, 'Door counter');
+  assert.equal(item.description, 'Counts door openings');
+  assert.deepEqual(item.topics, ['counter', 'door']);
+
+  const d = await (await get('/app-api/catalog/example-vendor/edge-app-door-counter')).json();
+  assert.equal(d.versions.length, 1);
+  assert.equal(d.versions[0].name, 'commit-20260827-a1b2c3d');
+  assert.equal(d.versions[0].unreleased, true);
+
+  const pkg = await (await get(`/app-api/catalog/example-vendor/edge-app-door-counter/package?tag=${d.versions[0].tag}`)).json();
+  assert.equal(pkg.version, 'commit-20260827-a1b2c3d');
+  assert.match(pkg.appLua, /door counter/);
+  assert.deepEqual(pkg.meta, {
+    name: 'Door counter',
+    short_description: 'Counts door openings',
+    description: '# Door counter\n\nCounts door openings per day and in total. The count can be reset.',
+    tags: ['counter', 'door'],
+    category: 'counter',
+    source_url: 'https://github.com/example-vendor/edge-app-door-counter',
+  });
+  assert.equal((await get('/app-api/catalog/example-vendor/not-an-app')).status, 404);
+});
+
+test('GITHUB_OWNERS limits the catalog, GITHUB_INCLUDE is always listed', async () => {
   const s = await start(envFor({ GITHUB_OWNERS: 'someone-else' }));
   const list = await (await fetch(s.url + '/app-api/catalog')).json();
-  assert.deepEqual(list, []);
+  assert.deepEqual(list.map((r) => r.id), ['example-vendor/edge-app-door-counter']);
   assert.equal((await fetch(s.url + '/app-api/catalog/example-org/temperature-alarm')).status, 404);
   s.server.close();
+  const s2 = await start(envFor({ GITHUB_INCLUDE: '' }));
+  assert.ok(!(await (await fetch(s2.url + '/app-api/catalog')).json()).some((r) => r.owner === 'example-vendor'));
+  s2.server.close();
 });
 
 test('edge client lifecycle', async () => {

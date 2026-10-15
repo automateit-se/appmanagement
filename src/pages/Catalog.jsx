@@ -11,7 +11,7 @@ import { InstallDialog } from '../components/InstallDialog.jsx';
 
 const fmtDate = (s) => (s ? new Date(s).toLocaleDateString('sv-SE') : '');
 
-function GithubDetail({ item, onClose, onInstall }) {
+function GithubDetail({ item, twin, onClose, onInstall, onOpenTwin }) {
   const [d, setD] = useState(null);
   const [error, setError] = useState('');
   const [tag, setTag] = useState('');
@@ -40,7 +40,7 @@ function GithubDetail({ item, onClose, onInstall }) {
             Stäng
           </button>
           <button type="button" className="btn primary" disabled={!v} onClick={() => onInstall({ mode: 'install', title: item.name, github: { owner: d.owner, repo: d.repo, tag: v.tag } })}>
-            Installera{v ? ` ${v.name}` : ''}
+            Installera{v && !v.unreleased ? ` ${v.name}` : ''}
           </button>
         </>
       }
@@ -57,12 +57,11 @@ function GithubDetail({ item, onClose, onInstall }) {
             <div className="warn-box small">Appens kod körs på installationens edge client med installationens behörigheter. Installera bara appar från källor du litar på.</div>
           )}
           {d.versions?.length ? (
-            <Field label="Version" help={v?.published ? `Släppt ${fmtDate(v.published)}` : undefined}>
+            <Field label="Version" help={v?.published ? `${v.unreleased ? 'Ändrad' : 'Släppt'} ${fmtDate(v.published)}` : undefined}>
               <select value={tag} onChange={(e) => setTag(e.target.value)}>
                 {d.versions.map((x, i) => (
                   <option key={x.tag} value={x.tag}>
-                    {x.name}
-                    {i === 0 ? ' (senaste)' : ''}
+                    {x.unreleased ? `Senaste ändringen ${fmtDate(x.published)} (${x.name})` : `${x.name}${i === 0 ? ' (senaste)' : ''}`}
                   </option>
                 ))}
               </select>
@@ -70,7 +69,21 @@ function GithubDetail({ item, onClose, onInstall }) {
           ) : (
             <div className="warn-box">Appen har ingen release på GitHub ännu och kan inte installeras.</div>
           )}
-          {v?.notes && (
+          {v?.unreleased && (
+            <div className="info-box small">Appen har inga releaser på GitHub, så den senaste ändringen på {d.defaultBranch} installeras. När en ny ändring görs där visas den som en ny version.</div>
+          )}
+          {twin && (
+            <div className="info-box small row gap wrap">
+              <span className="grow">
+                Det finns redan en app med samma namn i IoT Open ({twin.publisher?.name || 'IoT Open'}
+                {twin.official ? ', officiell' : ''}). Den är troligen samma app och kan installeras därifrån utan att en kopia skapas i din organisation.
+              </span>
+              <button type="button" className="btn" onClick={onOpenTwin}>
+                Visa i IoT Open
+              </button>
+            </div>
+          )}
+          {v?.notes && !v.unreleased && (
             <details className="notes">
               <summary>Nyheter i {v.name}</summary>
               <Markdown text={v.notes} />
@@ -171,6 +184,8 @@ export default function Catalog({ installation }) {
   // apps that came from GitHub through App Management are listed once, under GitHub
   const ioShown = (io || []).filter((a) => !(githubRepo(a.source_url) && ghUrls.has(normUrl(a.source_url)))).filter((a) => hit(a.name, a.short_description, ...(a.tags || [])));
   const ghShown = (gh || []).filter((r) => hit(r.name, r.description, r.id, ...(r.topics || [])));
+  // an app already in IoT Open under the same name, from another publisher (e.g. IoT Open's own copy of its GitHub app)
+  const twinOf = (r) => (io || []).find((a) => a.name?.trim().toLowerCase() === r.name.trim().toLowerCase() && normUrl(a.source_url) !== normUrl(r.url));
 
   return (
     <>
@@ -240,7 +255,15 @@ export default function Catalog({ installation }) {
         ))}
       </div>
 
-      {open?.kind === 'github' && <GithubDetail item={open.item} onClose={() => setOpen(null)} onInstall={(j) => (setOpen(null), setJob(j))} />}
+      {open?.kind === 'github' && (
+        <GithubDetail
+          item={open.item}
+          twin={twinOf(open.item)}
+          onClose={() => setOpen(null)}
+          onInstall={(j) => (setOpen(null), setJob(j))}
+          onOpenTwin={() => setOpen({ kind: 'iotopen', item: twinOf(open.item) })}
+        />
+      )}
       {open?.kind === 'iotopen' && <IotOpenDetail app={open.item} onClose={() => setOpen(null)} onInstall={(j) => (setOpen(null), setJob(j))} />}
       {job && (
         <InstallDialog

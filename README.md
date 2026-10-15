@@ -2,7 +2,7 @@
 
 Manage IoT Open **Edge Apps** for your installations from one place. It is built like the [IoT Open Dashboard](https://github.com/automateit-se/iotopen-dashboard) (same sign-in, server choice, look and container model), but its job is administrative: it does not show or control devices, it installs, configures and updates the apps that run on an installation's edge client.
 
-- **Install from GitHub with one click.** An edge app is a GitHub repository with the topic `iotopen-edge-app`. The user picks the app and a version and clicks *Install* (*Installera*). App Management uploads the version to IoT Open, publishes it and creates the app there if needed. The user never sees `app.lua` or `app.json`, and nothing has to be typed into IoT Open by hand: name, description and tags come from the repository.
+- **Install from GitHub with one click.** An edge app is a GitHub repository with `app.lua` and `app.json`, marked with the topic `iotopen-edge-app` or listed in `GITHUB_INCLUDE` (by default IoT Open's own apps, `IoTOpen/edge-app-*`). The user picks the app and a version and clicks *Install* (*Installera*). App Management uploads the version to IoT Open, publishes it and creates the app there if needed. The user never sees `app.lua` or `app.json`, and nothing has to be typed into IoT Open by hand: name, description and tags come from the repository's `edge-app.json` (IoT Open's own convention) or from the repository itself.
 - **Settings as a form.** The app's `app.json` describes its settings; App Management renders them as a form and validates them before saving. All input types in IoT Open's [app.json documentation](https://lynx.iotopen.se/tech/docs/platform/edgeapps/app_json.html) are supported: text (also multiline, with `validator`), number, option, checkbox, toggle, function and device selectors (also with a `value` per selected function), notification output selectors and repeat. The form is generic: what it shows is decided by each app's own `app.json`, and an unknown type can still be edited as JSON.
 - **Updates.** When a newer release exists on GitHub (or a newer version in IoT Open), the installed app shows *New version* (*Ny version*) and can be updated with its current settings.
 - **Existing apps.** Apps that already exist in IoT Open (official apps, or the organization's own) are listed too and can be installed, configured and updated the same way.
@@ -36,7 +36,7 @@ docker compose --profile demo up --build   # http://localhost:8081  demo@example
 npm install
 npm run dev:mock                            # mock IoT Open + GitHub + Docker on :8787
 LYNX_URL=http://localhost:8787 ALLOWED_LYNX_HOSTS=localhost ALLOW_INSECURE_LYNX_URL=true \
-  GITHUB_API_URL=http://localhost:8787/github-api GITHUB_RAW_URL=http://localhost:8787/github-raw \
+  GITHUB_API_URL=http://localhost:8787/github-api GITHUB_RAW_URL=http://localhost:8787/github-raw GITHUB_INCLUDE='example-vendor/edge-app-*' \
   DOCKER_HOST=tcp://localhost:8787/docker npm run dev:server   # backend on :8080
 npm run dev                                 # Vite on :5173, proxies /api, /app-api and /config.json to :8080
 npm test                                    # unit tests + the backend against the mock
@@ -64,7 +64,8 @@ The mock (`mock/server.mjs`, no dependencies) implements the parts of IoT Open, 
 | `CUSTOM_SERVERS`          | `true`                                | Lets users type another IoT Open server on the sign-in page. Edge clients can only be managed on `LYNX_URL` |
 | `BASE_PATH`               | *(empty)*                             | Path prefix when a reverse proxy forwards it unchanged, e.g. `/appmanagement` |
 | `GITHUB_TOPIC`            | `iotopen-edge-app`                    | Topic that marks a GitHub repository as an edge app |
-| `GITHUB_OWNERS`           | *(empty = all)*                       | Comma separated GitHub users/organizations whose apps are listed. Recommended, see [SECURITY.md](SECURITY.md) |
+| `GITHUB_OWNERS`           | *(empty = all)*                       | Comma separated GitHub users/organizations whose topic-tagged apps are listed. Recommended, see [SECURITY.md](SECURITY.md) |
+| `GITHUB_INCLUDE`          | `IoTOpen/edge-app-*`                  | Repositories listed without the topic: `owner/repo` or `owner/prefix-*`, comma separated. `""` = none. These are trusted by the operator, also when `GITHUB_OWNERS` is set |
 | `GITHUB_TOKEN`            | *(empty)*                             | Optional token (no scopes needed) for a higher GitHub rate limit |
 | `GITHUB_PRERELEASES`      | `false`                               | `true` also offers pre-releases |
 | `DOCKER_HOST`             | *(empty = edge clients off)*          | `tcp://docker-proxy:2375` (recommended) or `unix:///var/run/docker.sock` |
@@ -92,21 +93,23 @@ networks:
 
 ## Making an edge app for App Management
 
-An IoT Open edge app is two files: `app.lua` (the code) and `app.json` (its settings). For App Management, put them in a GitHub repository:
+An IoT Open edge app is two files: `app.lua` (the code) and `app.json` (its settings, see IoT Open's [app.json documentation](https://lynx.iotopen.se/tech/docs/platform/edgeapps/app_json.html)). App Management uses the same repository layout as IoT Open's own apps (for example [IoTOpen/edge-app-temperature-notification](https://github.com/IoTOpen/edge-app-temperature-notification)):
 
 ```
-my-edge-app/
+edge-app-my-app/
 ├── app.lua
 ├── app.json
-└── README.md        # becomes the app's description in IoT Open and in App Management
+├── edge-app.json    # optional: name, category, short_description, description, tags (IoT Open's convention, also edge_app.json)
+└── README.md        # the description when edge-app.json has none
 ```
 
-1. Add the topic **`iotopen-edge-app`** to the repository (*About → Topics* on GitHub). Other topics become the app's tags.
-2. Write a short repository description. It becomes the app's short description.
-3. Make a **release** (or a tag) for every version, e.g. `v1.0.0`. The version in IoT Open is the tag without the `v` (`1.0.0`). Without a release or tag the app is listed but cannot be installed.
-4. Optional fields in `app.json`: `name` (otherwise the repository name, e.g. `temperature-alarm` → *Temperature alarm*) and `category`.
+1. Add the topic **`iotopen-edge-app`** to the repository (*About → Topics* on GitHub), or list it in `GITHUB_INCLUDE`.
+2. Describe the app in `edge-app.json`, or let App Management take it from the repository: name from the repository name (`edge-app-temperature-alarm` → *Temperature alarm*), short description from the repository description, tags from its topics, description from `README.md`. In `edge-app.json`, `publisher`, `public` and `source_url` are ignored: the app is created private to the installation's organization, with the repository as source.
+3. Make a **release** (or a tag) for every version, e.g. `v1.0.0`. The version in IoT Open is the tag without the `v` (`1.0.0`). A repository **without releases or tags** can still be installed: the latest commit on its default branch becomes the version `commit-<date>-<sha>`, and a new commit shows up as a new version.
 
-The repository must be public. **Existing apps** become installable from GitHub the same way: if their `app.lua` and `app.json` are in a repository, add the topic and make a release. Apps that only exist in IoT Open are listed under *Available in IoT Open* (*Finns i IoT Open*) and work without GitHub.
+The repository must be public. **Existing apps** work as they are: IoT Open's own repositories are listed through the default `GITHUB_INCLUDE`, and any other repository with `app.lua` and `app.json` only needs the topic. Apps that only exist in IoT Open are listed under *Available in IoT Open* (*Finns i IoT Open*) and work without GitHub. When a GitHub app has the same name as an app that already exists in IoT Open (for example IoT Open's own published copy), the app page says so and links to it, so the organization does not get a copy it does not need.
+
+An app in IoT Open can never be deleted, only hidden ([IoT Open: Edge Apps](https://lynx.iotopen.se/tech/docs/platform/edgeapps/)). App Management therefore finds an app it created before by its `source_url` (the repository) and never creates it twice.
 
 ### What happens on *Install*
 

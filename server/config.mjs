@@ -66,6 +66,9 @@ export function loadConfig(env = process.env) {
   if (!/^[a-z0-9][a-z0-9-]{0,49}$/.test(topic)) throw new ConfigError(`GITHUB_TOPIC='${topic}' is not a valid GitHub topic`);
   const owners = list(env.GITHUB_OWNERS);
   for (const o of owners) if (!/^[A-Za-z0-9-]{1,39}$/.test(o)) throw new ConfigError(`GITHUB_OWNERS: '${o}' is not a GitHub user or organization`);
+  // repositories listed without the topic: "owner/repo" or "owner/prefix-*". Default: IoT Open's own edge apps. "" = none
+  const include = env.GITHUB_INCLUDE === undefined ? ['IoTOpen/edge-app-*'] : list(env.GITHUB_INCLUDE);
+  for (const i of include) if (!/^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]*\*?[A-Za-z0-9._-]*$/.test(i)) throw new ConfigError(`GITHUB_INCLUDE: '${i}' is not owner/repo or owner/prefix-*`);
 
   const edgeImage = String(env.EDGE_CLIENT_IMAGE || 'ghcr.io/iotopen/edge-client:latest');
   if (!/^[a-z0-9]+([._/:@-][a-z0-9]+)*$/i.test(edgeImage)) throw new ConfigError(`EDGE_CLIENT_IMAGE='${edgeImage}' is not an image reference`);
@@ -87,6 +90,7 @@ export function loadConfig(env = process.env) {
     github: {
       topic,
       owners,
+      include,
       token: String(env.GITHUB_TOKEN || ''),
       apiUrl: checkOrigin('GITHUB_API_URL', env.GITHUB_API_URL || 'https://api.github.com', { insecure, allowPath: true }),
       rawUrl: checkOrigin('GITHUB_RAW_URL', env.GITHUB_RAW_URL || 'https://raw.githubusercontent.com', { insecure, allowPath: true }),

@@ -11,7 +11,8 @@ services:
       # Edge clients: App Management talks to Docker only through the socket proxy below
       DOCKER_HOST: tcp://docker-proxy:2375
       # EDGE_ADMINS: admin@example.com      # only these IoT Open users (e-mail or user id) may manage edge clients
-      # GITHUB_OWNERS: example-org         # only list edge apps from these GitHub users/organizations
+      # GITHUB_OWNERS: automateit-se       # only list topic-tagged edge apps from these GitHub users/organizations
+      # GITHUB_INCLUDE: IoTOpen/edge-app-*  # repositories listed without the topic (default: IoT Open's own edge apps, "" = none)
       # GITHUB_TOKEN: ...                  # optional, raises GitHub's rate limit (no scopes needed)
       # CUSTOM_SERVERS: "false"            # hide the server choice on the sign-in page (only LYNX_URL)
       # BASE_PATH: /appmanagement          # only if a proxy in front forwards the path prefix unchanged
@@ -58,6 +59,7 @@ services:
       ALLOW_INSECURE_LYNX_URL: "true"
       GITHUB_API_URL: http://mock:8787/github-api
       GITHUB_RAW_URL: http://mock:8787/github-raw
+      GITHUB_INCLUDE: example-vendor/edge-app-*
       DOCKER_HOST: tcp://mock:8787/docker
     depends_on: [mock]
 
