@@ -312,3 +312,12 @@ select.compact { width: auto; padding: 4px 8px; font-size: 13px; }
 }
 .info-box.progress, .error-box .state, .info-box .state { vertical-align: middle; }
 .info-box.progress { display: flex; padding: 10px 12px; }
+
+/* ---- settings form: repeat, checkbox groups, values for selected functions ---- */
+.repeat { display: grid; gap: 8px; }
+.repeat-item { border: 1px dashed var(--border); border-radius: 8px; padding: 8px 10px 0; }
+.repeat-head { margin-bottom: 4px; }
+.check-group { display: flex; flex-wrap: wrap; gap: 6px 16px; }
+.value-input { width: 110px; flex: none; padding: 5px 8px; }
+.check-list li.row { padding-right: 8px; }
+.repeat > .btn { justify-self: start; padding: 5px 12px; font-size: 14px; }

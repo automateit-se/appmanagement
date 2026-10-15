@@ -44,7 +44,8 @@ const functions = {
   1002: [{ id: 311, installation_id: 1002, type: 'energy', meta: { name: 'Energi', device_id: '211', topic_read: 'obj/modbus/211/energy' } }],
 };
 
-const publishers = { 10: { id: 77, name: 'Exempelbolaget AB' } };
+// the publisher of an organization's apps is the organization itself (publisher.id = organization id)
+const publishers = { 10: { id: 10, name: 'Exempelbolaget AB' } };
 const now = () => Math.floor(Date.now() / 1000);
 const hash = () => randomBytes(20).toString('hex');
 
@@ -132,6 +133,34 @@ const repos = {
           guide: [{ id: 'stage_1', title: 'Mätare', description: '', input_fields: ['meters', 'hour'] }],
         },
         lua: '-- energy report 0.2.0\n', at: '2026-07-01T10:00:00Z', notes: '',
+      },
+    },
+  },
+  'example-org/light-control': {
+    description: 'Tänder lampor när en dörr öppnas',
+    topics: ['iotopen-edge-app', 'lights'],
+    readme: '# Light control\n\nTänder valda lampor med valda värden när en dörr öppnas, och skickar en notis.\n',
+    releases: {
+      'v2.0.0': {
+        json: {
+          author: 'Exempelbolaget',
+          licence: 'MIT',
+          input: {
+            door: { type: 'single_function_selector', name: 'Dörr', description: 'Dörren som tänder lamporna', required: true },
+            lights: { type: 'multi_function_selector', name: 'Lampor', description: 'Lampor och värdet de ska få', value: true, required: true },
+            timeout: { type: 'number', name: 'Tid (minuter)', description: 'Hur länge lamporna lyser', default: '10' },
+            days: { type: 'checkbox', name: 'Dagar', description: 'Dagar appen är aktiv', values: { mon: 'Mån', tue: 'Tis', wed: 'Ons', thu: 'Tor', fri: 'Fre', sat: 'Lör', sun: 'Sön' }, default: ['mon', 'tue', 'wed', 'thu', 'fri'] },
+            trigger_value: { type: 'single_function_selector', name: 'Givare', description: 'Givare och värde', value: true, filter: { type: 'temperature' } },
+            temp: { type: 'repeat', name: 'Temperaturvillkor', description: 'Givare och värden som också tänder lamporna', min: 1, max: 3, input_fields: ['trigger_value'] },
+            notification: { type: 'single_notification_output_selector', name: 'Notis', description: 'Var en notis skickas' },
+            message: { type: 'text', name: 'Meddelande', multiline: true, default: 'Dörren öppnades' },
+          },
+          guide: [
+            { id: 'stage_1', title: 'Funktioner', description: 'Välj dörr och lampor.', input_fields: ['door', 'lights', 'temp'] },
+            { id: 'stage_2', title: 'Tider och notiser', description: '', input_fields: ['timeout', 'days', 'notification', 'message'] },
+          ],
+        },
+        lua: '-- light control 2.0.0\n', at: '2026-09-20T10:00:00Z', notes: '',
       },
     },
   },
@@ -288,6 +317,20 @@ async function lynxApi(req, res, p, url) {
   if (p === '/api/v2/edge/app' && req.method === 'GET') {
     return send(res, 200, edgeApps.filter((a) => a.public || u.organizations.some((o) => publishers[o]?.id === a.publisher?.id)).map(publicApp));
   }
+  if ((m = /^\/api\/v2\/notification\/(\d+)\/output$/.exec(p))) {
+    if (!canSee(u, m[1])) return send(res, 403, { message: 'forbidden' });
+    return send(res, 200, [{ id: 401, installation_id: Number(m[1]), name: 'E-post till driften', notification_executor_id: 1, config: {} }]);
+  }
+  if (p === '/api/v2/edge/app' && req.method === 'PUT') {
+    // update takes the id in the body
+    const b = await json(req);
+    const app = edgeApps.find((a) => a.id === Number(b.id));
+    if (!app) return send(res, 404, { message: 'not found' });
+    if (!u.organizations.some((o) => publishers[o]?.id === app.publisher?.id)) return send(res, 403, { message: 'forbidden' });
+    for (const k of ['name', 'short_description', 'description', 'tags', 'category', 'source_url', 'public']) if (b[k] !== undefined) app[k] = b[k];
+    app.updated = now();
+    return send(res, 200, publicApp(app));
+  }
   if (p === '/api/v2/edge/app' && req.method === 'POST') {
     const b = await json(req);
     const pub = Object.entries(publishers).find(([o, x]) => x.id === b.publisher?.id && u.organizations.includes(Number(o)));
@@ -336,13 +379,6 @@ async function lynxApi(req, res, p, url) {
     const own = u.organizations.some((o) => publishers[o]?.id === app.publisher?.id);
     const sub = m[2] || '';
     if (sub === '' && req.method === 'GET') return send(res, 200, publicApp(app));
-    if (sub === '' && req.method === 'PUT') {
-      if (!own) return send(res, 403, { message: 'forbidden' });
-      const b = await json(req);
-      for (const k of ['name', 'short_description', 'description', 'tags', 'category', 'source_url', 'public']) if (b[k] !== undefined) app[k] = b[k];
-      app.updated = now();
-      return send(res, 200, publicApp(app));
-    }
     if (sub === 'version' && req.method === 'GET') {
       const all = url.searchParams.get('untagged') === 'true';
       return send(res, 200, app.versions.filter((v) => all || v.name).map(({ name, hash: h, timestamp }) => ({ name, hash: h, timestamp })));
@@ -356,6 +392,9 @@ async function lynxApi(req, res, p, url) {
       } catch {
         return send(res, 400, { message: 'app_json is not valid json' });
       }
+      // identical to the latest upload: 204, no new version
+      const last = app.versions[app.versions.length - 1];
+      if (last && last.app_json === parts.app_json && last.app_lua === parts.app_lua) return send(res, 204, '');
       const v = { name: '', hash: hash(), timestamp: now(), app_json: parts.app_json, app_lua: parts.app_lua };
       app.versions.push(v);
       return send(res, 200, { hash: v.hash });

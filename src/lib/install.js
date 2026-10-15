@@ -36,16 +36,16 @@ export async function ensureGithubVersion(lynx, { orgId, pkg, onStep = () => {} 
 
   if (!app) {
     onStep('Skapar appen i IoT Open…');
-    let publisher;
+    // the publisher is the organization (publisher.id = organization id)
+    const publisher = await lynx.edgePublisher(orgId).catch(() => ({ id: orgId }));
     try {
-      publisher = await lynx.edgePublisher(orgId);
+      app = await lynx.createEdgeApp({ ...pkg.meta, publisher: { id: publisher.id ?? orgId }, public: false });
     } catch (e) {
-      if (e.status === 404 || e.status === 403) {
-        throw new InstallError('Organisationen kan inte publicera edge apps i IoT Open, eller så saknar ditt konto rätt till det. Be IoT Open eller en administratör aktivera det för organisationen.');
+      if (e.status === 403 || e.status === 401) {
+        throw new InstallError(`Ditt konto får inte publicera edge apps för organisationen i IoT Open (${e.message}). Be en administratör ge dig rätt till det.`);
       }
       throw e;
     }
-    app = await lynx.createEdgeApp({ ...pkg.meta, publisher: { id: publisher.id }, public: false });
   } else if (!sameMeta(app, pkg.meta)) {
     // name, description and tags follow GitHub; a failure here does not stop the installation
     try {
@@ -62,9 +62,12 @@ export async function ensureGithubVersion(lynx, { orgId, pkg, onStep = () => {} 
   const res = await lynx.createEdgeAppVersion(app.id, pkg.appJson, pkg.appLua);
   let hash = res && typeof res === 'object' ? res.hash : null;
   if (!hash) {
-    // some IoT Open versions answer 204: the new version is the newest one without a name
+    // 204: the files are identical to the latest upload. If that one already has a name, the GitHub release only
+    // re-tagged the same code - use that version. Otherwise name it now.
     const all = (await lynx.edgeAppVersions(app.id, true)) || [];
-    hash = [...all].filter((v) => !v.name).sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))[0]?.hash;
+    const latest = [...all].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))[0];
+    if (latest?.name) return { app, version: latest.name, sameAs: pkg.version };
+    hash = latest?.hash;
   }
   if (!hash) throw new InstallError('IoT Open tog emot versionen men svarade inte med någon identitet (hash).');
 

@@ -118,6 +118,7 @@ export const lynx = {
   installations: () => request('/api/v2/installationinfo?assigned=false'),
   devices: (iid) => request(`/api/v2/devicex/${iid}`),
   functions: (iid) => request(`/api/v2/functionx/${iid}`),
+  notificationOutputs: (iid) => request(`/api/v2/notification/${iid}/output`),
 
   // ---- edge apps: catalogue ----
   edgeApps: () => request('/api/v2/edge/app'),
@@ -126,11 +127,12 @@ export const lynx = {
   edgeApp: (id) => request(`/api/v2/edge/app/${id}`),
   edgePublisher: (orgId) => request(`/api/v2/edge/publisher/${orgId}`),
   createEdgeApp: (app) => request('/api/v2/edge/app', { method: 'POST', body: app }),
-  updateEdgeApp: (app) => request(`/api/v2/edge/app/${app.id}`, { method: 'PUT', body: app }),
+  /** The app's id goes in the body (PUT /api/v2/edge/app). */
+  updateEdgeApp: (app) => request('/api/v2/edge/app', { method: 'PUT', body: app }),
 
   // ---- edge apps: versions ----
   edgeAppVersions: (id, untagged = false) => request(`/api/v2/edge/app/${id}/version${untagged ? '?untagged=true' : ''}`),
-  /** Uploads app.json + app.lua as a new (unnamed) version. IoT Open answers with its hash. */
+  /** Uploads app.json + app.lua as a new (unnamed) version: { hash }, or null (204) when the files equal the latest version. */
   createEdgeAppVersion: (id, appJson, appLua) => {
     const fd = new FormData();
     fd.append('app_json', new Blob([appJson], { type: 'application/json' }), 'app.json');

@@ -28,7 +28,8 @@ const options = {
     level: { type: 'option', name: 'Nivå', values: { 1: 'Varning', 2: 'Kritisk' }, default: 1 },
     notify: { type: 'toggle', name: 'Notis', default: true, true_value: 'yes', false_value: 'no' },
     label: { type: 'text', name: 'Namn', validator: '^.{1,5}$', on_error: 'Max 5 tecken' },
-    rows: { type: 'repeat', name: 'Rader' },
+    rows: { type: 'repeat', name: 'Rader', input_fields: ['row_value'] },
+    row_value: { type: 'number', name: 'Värde' },
   },
   guide: [
     { id: 'a', title: 'Givare', input_fields: ['sensor', 'limit', 'nonexistent'] },
@@ -42,7 +43,11 @@ test('input kinds', () => {
   assert.equal(inputKind({ type: 'single_device_selector' }), 'device');
   assert.equal(inputKind({ type: 'multi_device_selector' }), 'devices');
   assert.equal(inputKind({ type: 'option' }), 'option');
-  assert.equal(inputKind({ type: 'repeat' }), 'json');
+  assert.equal(inputKind({ type: 'repeat' }), 'repeat');
+  assert.equal(inputKind({ type: 'checkbox' }), 'checkbox');
+  assert.equal(inputKind({ type: 'single_notification_output_selector' }), 'notification');
+  assert.equal(inputKind({ type: 'multi_notification_output_selector' }), 'notifications');
+  assert.equal(inputKind({ type: 'something_new' }), 'json');
   assert.equal(inputKind({}), 'text');
 });
 
@@ -168,9 +173,24 @@ test('ensureGithubVersion finds the hash when IoT Open answers 204', async () =>
   assert.deepEqual(lynx.calls.at(-1), ['publish', 5, '1.1.0', 'h1']);
 });
 
-test('ensureGithubVersion explains a missing publisher', async () => {
+test('ensureGithubVersion uses the organization as publisher and explains a refusal', async () => {
   const lynx = fakeLynx({ publisher: null });
-  await assert.rejects(ensureGithubVersion(lynx, { orgId: 10, pkg }), /kan inte publicera edge apps/);
+  await ensureGithubVersion(lynx, { orgId: 10, pkg });
+  assert.deepEqual(lynx.calls[0][1].publisher, { id: 10 });
+  const refusing = fakeLynx();
+  refusing.createEdgeApp = async () => {
+    throw Object.assign(new Error('forbidden'), { status: 403 });
+  };
+  await assert.rejects(ensureGithubVersion(refusing, { orgId: 10, pkg }), /får inte publicera edge apps/);
+});
+
+test('ensureGithubVersion: identical files (204) reuse the latest named version', async () => {
+  const app = { id: 5, ...pkg.meta };
+  const lynx = fakeLynx({ apps: [app], versions: { 5: [{ name: '1.0.0', hash: 'h0', timestamp: 5 }] }, uploadAnswer: null });
+  lynx.createEdgeAppVersion = async () => null; // nothing new stored
+  const r = await ensureGithubVersion(lynx, { orgId: 10, pkg });
+  assert.equal(r.version, '1.0.0');
+  assert.equal(r.sameAs, '1.1.0');
 });
 
 test('docker log demultiplexing', () => {
@@ -235,4 +255,46 @@ test('edge status payloads', () => {
   for (const v of [1, '1', true, 'online', { value: 1 }, { value: '1', timestamp: 1 }]) assert.equal(parseStatus(v), 'online');
   for (const v of [0, '0', false, 'offline', { value: 0 }]) assert.equal(parseStatus(v), 'offline');
   for (const v of [null, '', 'maybe', { msg: 'x' }]) assert.equal(parseStatus(v), null);
+});
+
+const doc = {
+  input: {
+    trigger_function: { type: 'single_function_selector', value: true, required: true },
+    lights: { type: 'multi_function_selector', value: true },
+    plain: { type: 'multi_device_selector' },
+    timeout: { type: 'number', default: '10' },
+    days: { type: 'checkbox', values: { mon: 'Mån', tue: 'Tis' }, default: ['mon'] },
+    trigger_value: { type: 'single_function_selector', value: true, required: true },
+    temp: { type: 'repeat', min: 2, max: 4, input_fields: ['trigger_value'] },
+    text_example: { type: 'text', validator: '[a-zA-Z]*', on_error: 'Bara bokstäver' },
+  },
+  guide: [{ id: 'a', input_fields: ['trigger_function', 'lights', 'plain', 'timeout', 'days', 'temp', 'text_example'] }],
+};
+
+test('app.json as documented by IoT Open: values, checkbox, repeat', () => {
+  const v = initialValues(doc);
+  assert.deepEqual(v.lights, {});
+  assert.deepEqual(v.plain, []);
+  assert.deepEqual(v.days, ['mon']);
+  assert.equal(v.temp.length, 2);
+  assert.equal('trigger_value' in v, false, 'inputs used only inside a repeat are not top level');
+
+  const errs = validate(doc, { ...v, trigger_function: { 4456: '' }, text_example: 'abc1' });
+  assert.equal(errs.trigger_function, 'Ange ett värde för varje vald');
+  assert.equal(errs['temp.0.trigger_value'], 'Måste fyllas i');
+  assert.equal(errs.text_example, 'Bara bokstäver', 'the validator must match the whole text');
+
+  const ok = { ...v, trigger_function: { 4456: '255' }, temp: [{ trigger_value: { 9: '26' } }, { trigger_value: { 12: '10' } }], text_example: 'Hello' };
+  assert.deepEqual(validate(doc, ok), {});
+  assert.deepEqual(cleanValues(doc, ok), {
+    trigger_function: { 4456: 255 },
+    lights: {},
+    plain: [],
+    timeout: 10,
+    days: ['mon'],
+    temp: [{ trigger_value: { 9: 26 } }, { trigger_value: { 12: 10 } }],
+    text_example: 'Hello',
+  });
+  assert.equal(validate(doc, { ...ok, temp: [ok.temp[0]] }).temp, 'Minst 2');
+  assert.equal(validate(doc, { ...ok, days: ['xyz'] }).days, 'Välj bland alternativen');
 });
