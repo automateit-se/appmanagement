@@ -1,0 +1,7 @@
+node_modules
+dist
+*.log
+# local notes that may contain credentials
+*Account*.md
+# local edge client configuration (contains the MQTT password)
+iotopen.json

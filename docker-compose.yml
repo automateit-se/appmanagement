@@ -1,0 +1,66 @@
+services:
+  appmanagement:
+    build: .
+    image: ghcr.io/automateit-se/appmanagement:latest
+    ports:
+      - "8080:8080"
+    environment:
+      LYNX_URL: https://lynx.iotopen.se    # your IoT Open instance (https://host, no path)
+      ALLOWED_LYNX_HOSTS: lynx.iotopen.se  # comma separated allow-list for LYNX_URL
+      APP_TITLE: App Management
+      # Edge clients: App Management talks to Docker only through the socket proxy below
+      DOCKER_HOST: tcp://docker-proxy:2375
+      # EDGE_ADMINS: admin@example.com      # only these IoT Open users (e-mail or user id) may manage edge clients
+      # GITHUB_OWNERS: example-org         # only list edge apps from these GitHub users/organizations
+      # GITHUB_TOKEN: ...                  # optional, raises GitHub's rate limit (no scopes needed)
+      # CUSTOM_SERVERS: "false"            # hide the server choice on the sign-in page (only LYNX_URL)
+      # BASE_PATH: /appmanagement          # only if a proxy in front forwards the path prefix unchanged
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [default, docker]
+    depends_on: [docker-proxy]
+    restart: unless-stopped
+
+  # Gives App Management the Docker API without mounting the socket into it. Only what the edge client
+  # management needs is enabled; the proxy is on an internal network that nothing else can reach.
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    environment:
+      CONTAINERS: 1
+      IMAGES: 1
+      VOLUMES: 1
+      POST: 1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [docker]
+    restart: unless-stopped
+
+  # Local demo without IoT Open, GitHub or a real Docker edge client:
+  #   docker compose --profile demo up --build
+  # then open http://localhost:8081  (login: demo@example.com / demo, or API key demo-api-key)
+  mock:
+    profiles: ["demo"]
+    image: node:22-alpine
+    working_dir: /mock
+    volumes: ["./mock:/mock:ro"]
+    command: ["node", "server.mjs"]
+    environment:
+      PORT: "8787"
+  appmanagement-demo:
+    profiles: ["demo"]
+    build: .
+    ports:
+      - "8081:8080"
+    environment:
+      LYNX_URL: http://mock:8787
+      ALLOWED_LYNX_HOSTS: mock
+      ALLOW_INSECURE_LYNX_URL: "true"
+      GITHUB_API_URL: http://mock:8787/github-api
+      GITHUB_RAW_URL: http://mock:8787/github-raw
+      DOCKER_HOST: tcp://mock:8787/docker
+    depends_on: [mock]
+
+networks:
+  docker:
+    internal: true
