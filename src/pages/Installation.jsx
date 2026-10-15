@@ -1,5 +1,8 @@
+import { useEffect, useState } from 'react';
 import { useApp } from '../context/AppContext.jsx';
 import { config } from '../api/config.js';
+import { backend } from '../api/backend.js';
+import { onDefaultServer } from '../api/server.js';
 import { Icon } from '../components/icons.jsx';
 import InstalledApps from './InstalledApps.jsx';
 import Catalog from './Catalog.jsx';
@@ -11,9 +14,33 @@ const TABS = [
   { id: 'edge', label: 'Edge client', icon: 'box' },
 ];
 
+/**
+ * What the user may do here, from the user's role in IoT Open (read by the backend). On another IoT Open server
+ * than the backend's own it is unknown: apps are offered (IoT Open itself refuses what is not allowed) and edge
+ * clients are not.
+ */
+function useAccess(iid) {
+  // undefined while loading, null when unknown
+  const [access, setAccess] = useState(() => (onDefaultServer() ? undefined : null));
+  useEffect(() => {
+    if (!onDefaultServer()) return;
+    let alive = true;
+    setAccess(undefined);
+    backend.access(iid).then(
+      (a) => alive && setAccess(a),
+      () => alive && setAccess(null),
+    );
+    return () => {
+      alive = false;
+    };
+  }, [iid]);
+  return access;
+}
+
 export default function Installation({ iid, tab }) {
   const { installations } = useApp();
   const inst = installations.find((i) => i.id === iid);
+  const access = useAccess(iid);
   if (!inst) {
     return (
       <div className="page">
@@ -24,8 +51,9 @@ export default function Installation({ iid, tab }) {
       </div>
     );
   }
-  const tabs = TABS.filter((t) => t.id !== 'edge' || config.edgeClients);
-  const current = tabs.some((t) => t.id === tab) ? tab : '';
+  const tabs = TABS.filter((t) => t.id !== 'edge' || (config.edgeClients && (access?.viewEdge || access?.manageEdge)));
+  // the edge tab appears once the access is known; a link straight to it is kept meanwhile
+  const current = tabs.some((t) => t.id === tab) || (tab === 'edge' && access === undefined) ? tab : '';
   return (
     <div className="page">
       <a className="back" href="#/">
@@ -48,9 +76,12 @@ export default function Installation({ iid, tab }) {
           ))}
         </div>
       </nav>
-      {current === '' && <InstalledApps installation={inst} />}
-      {current === 'add' && <Catalog installation={inst} />}
-      {current === 'edge' && <EdgeClient installation={inst} />}
+      {access?.role && !access.installApps && !access.updateApps && (
+        <div className="info-box small">Din roll i IoT Open ({access.role}) kan se installationens appar men inte ändra dem.</div>
+      )}
+      {current === '' && <InstalledApps installation={inst} access={access || null} />}
+      {current === 'add' && <Catalog installation={inst} access={access || null} />}
+      {current === 'edge' && (access === undefined ? <p className="muted">Laddar…</p> : <EdgeClient installation={inst} access={access} />)}
     </div>
   );
 }

@@ -230,9 +230,33 @@ test('EDGE_CLIENT_NETWORK is created on first use', async () => {
   s.server.close();
 });
 
+test('IoT Open roles decide what a user may do', async () => {
+  const acc = async (key, iid) => (await fetch(`${base}/app-api/access/${iid}`, { headers: { 'X-API-Key': key } })).json();
+
+  const admin = await acc(KEY, 1002);
+  assert.deepEqual([admin.role, admin.manageEdge, admin.viewEdge, admin.installApps, admin.publishApps], ['admin', true, true, true, true]);
+
+  // owner: gateway rights on assigned installations only
+  const own1 = await acc('owner-api-key', 1001);
+  assert.deepEqual([own1.role, own1.assigned, own1.manageEdge, own1.viewEdge, own1.installApps], ['owner', true, true, true, true]);
+  const own2 = await acc('owner-api-key', 1002);
+  assert.deepEqual([own2.assigned, own2.manageEdge, own2.viewEdge, own2.installApps], [false, false, false, false]);
+
+  // read_only: may look, not change
+  const view = await acc('viewer-api-key', 1001);
+  assert.deepEqual([view.role, view.manageEdge, view.viewEdge, view.installApps, view.updateApps], ['read_only', false, true, false, false]);
+  assert.equal((await fetch(`${base}/app-api/edge/1001`, { headers: { 'X-API-Key': 'viewer-api-key' } })).status, 200);
+  const denied = await fetch(`${base}/app-api/edge/1001`, { method: 'POST', headers: { 'X-API-Key': 'viewer-api-key' }, body: JSON.stringify({ confirm: true }) });
+  assert.equal(denied.status, 403);
+  assert.match((await denied.json()).message, /read_only/);
+  assert.equal((await fetch(`${base}/app-api/edge/1002`, { headers: { 'X-API-Key': 'owner-api-key' } })).status, 403);
+});
+
 test('EDGE_ADMINS restricts edge client management', async () => {
   const s = await start(envFor({ EDGE_ADMINS: 'admin@example.com' }));
-  const r = await fetch(s.url + '/app-api/edge/1001', { headers: { 'X-API-Key': KEY } });
+  // looking is still allowed, managing is not
+  assert.equal((await fetch(s.url + '/app-api/edge/1001', { headers: { 'X-API-Key': KEY } })).status, 200);
+  const r = await fetch(s.url + '/app-api/edge/1001/start', { method: 'POST', headers: { 'X-API-Key': KEY }, body: '{}' });
   assert.equal(r.status, 403);
   s.server.close();
   const s2 = await start(envFor({ EDGE_ADMINS: 'Demo@Example.com' }));

@@ -73,23 +73,37 @@ Releases and how to publish one: [docs/releases](docs/releases/README.md).
 | `DOCKER_HOST`             | *(empty = edge clients off)*          | `tcp://docker-proxy:2375` (recommended) or `unix:///var/run/docker.sock` |
 | `EDGE_CLIENT_IMAGE`       | `ghcr.io/iotopen/edge-client:latest`  | Image for new edge clients and updates |
 | `EDGE_CLIENT_NETWORK`     | *(empty = Docker's default)*          | Docker network for edge client containers, created on first use (bridge, outbound only). `deploy/compose.yml` uses `iotopen-edge` |
-| `EDGE_ADMINS`             | *(empty = any signed-in user)*        | IoT Open users (e-mail or user id, comma separated) who may manage edge clients |
+| `EDGE_ADMINS`             | *(empty)*                             | Optional extra restriction: only these IoT Open users (e-mail or user id) may manage edge clients, on top of their IoT Open role |
 | `REAL_IP_HEADER`          | *(empty)*                             | Header with the client address set by a trusted reverse proxy, e.g. `cf-connecting-ip`, for the sign-in rate limit |
 
 ### Production behind the edge proxy
 
-[`deploy/compose.yml`](deploy/compose.yml) runs App Management from `ghcr.io` behind [automateit-se/edge](https://github.com/automateit-se/edge) (alias `appmanagement` on the `edge` network, published by `sites/appmanagement.conf` there), with the socket proxy on an internal network. Settings go in a `.env` next to it, see [`deploy/env.example`](deploy/env.example); `EDGE_ADMINS` is required.
+[`deploy/compose.yml`](deploy/compose.yml) runs App Management from `ghcr.io` behind [automateit-se/edge](https://github.com/automateit-se/edge) (alias `appmanagement` on the `edge` network, published by `sites/appmanagement.conf` there), with the socket proxy on an internal network. Optional settings go in a `.env` next to it, see [`deploy/env.example`](deploy/env.example).
 
 ```bash
 sudo mkdir -p /opt/appmanagement && cd /opt/appmanagement
 sudo curl -fsSLO https://raw.githubusercontent.com/automateit-se/appmanagement/main/deploy/compose.yml
 sudo curl -fsSL -o .env https://raw.githubusercontent.com/automateit-se/appmanagement/main/deploy/env.example
-sudo nano .env            # EDGE_ADMINS=...
+sudo nano .env            # optional settings
 sudo docker compose up -d
 sudo edge-update          # on the edge host: publishes appmanagement.<domain>
 ```
 
 Sign-in is IoT Open's own; nothing else is put in front of it.
+
+### Who may do what
+
+IoT Open decides, through the role of the signed-in user (`/api/v2/role/{id}`) and the installations assigned to the user. Change IoT Open's roles and App Management follows; there is nothing to configure on the server.
+
+| Permission in IoT Open (`…/all` or `…/assigned`) | Allows in App Management | Default roles |
+|---|---|---|
+| `gateway/reset/password` | set up, renew, update, stop, start and remove the installation's edge client | admin (all), owner (assigned) |
+| `edge/app/configured/list` | see the edge client's status and log | admin, owner, read_only |
+| `edge/app/configured/create_delete` | install and remove apps | admin, owner |
+| `edge/app/configured/update` | change settings, update apps | admin, owner |
+| `edge/app/create` | create the organization's apps from GitHub | admin, owner |
+
+What the user may not do is not shown. IoT Open checks the same permissions on its own API.
 
 ## Making an edge app for App Management
 

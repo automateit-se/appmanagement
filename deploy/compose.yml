@@ -3,7 +3,7 @@
 #   sudo mkdir -p /opt/appmanagement && cd /opt/appmanagement
 #   sudo curl -fsSLO https://raw.githubusercontent.com/automateit-se/appmanagement/main/deploy/compose.yml
 #   sudo curl -fsSL -o .env https://raw.githubusercontent.com/automateit-se/appmanagement/main/deploy/env.example
-#   sudo nano .env                      # at least EDGE_ADMINS
+#   sudo nano .env                      # optional settings
 #   sudo docker compose up -d
 #   sudo edge-update                    # publishes appmanagement.<domain> through the edge (sites/appmanagement.conf)
 #
@@ -24,8 +24,8 @@ services:
       DOCKER_HOST: tcp://docker-proxy:2375
       EDGE_CLIENT_NETWORK: iotopen-edge
       EDGE_CLIENT_IMAGE: ${EDGE_CLIENT_IMAGE:-ghcr.io/iotopen/edge-client:latest}
-      # IoT Open users (e-mail or user id, comma separated) who may manage edge clients - required here
-      EDGE_ADMINS: ${EDGE_ADMINS:?set EDGE_ADMINS in .env}
+      # who may do what is decided by the user's role in IoT Open; EDGE_ADMINS can only restrict edge clients further
+      EDGE_ADMINS: ${EDGE_ADMINS:-}
       # edge apps on GitHub: topic-tagged ones from these owners, plus IoT Open's own apps
       GITHUB_OWNERS: ${GITHUB_OWNERS:-automateit-se}
       GITHUB_INCLUDE: ${GITHUB_INCLUDE:-IoTOpen/edge-app-*}

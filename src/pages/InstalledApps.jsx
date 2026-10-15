@@ -30,16 +30,16 @@ async function latestFor(app, orgId) {
   return { version: v?.name, source: 'iotopen' };
 }
 
-function EdgeHint({ iid }) {
+function EdgeHint({ iid, access }) {
   const [st, setSt] = useState(null);
   const [p] = usePresence(iid, 0);
-  const local = config.edgeClients && onDefaultServer();
+  const local = config.edgeClients && onDefaultServer() && !!(access?.viewEdge || access?.manageEdge);
   useEffect(() => {
     if (!local) return;
     backend.edgeStatus(iid).then(setSt, () => setSt(null));
   }, [iid, local]);
   if (!onDefaultServer() || !p) return null;
-  const edgeLink = local && (
+  const edgeLink = local && (st?.exists || access?.manageEdge) && (
     <a className="btn" href={`#/i/${iid}/edge`}>
       {st?.exists ? 'Visa edge client' : 'Sätt upp edge client'}
     </a>
@@ -66,7 +66,7 @@ function EdgeHint({ iid }) {
       </div>
     );
   }
-  if (!local || st?.exists) return null;
+  if (!local || st?.exists || !access?.manageEdge) return null;
   return (
     <div className="info-box row gap wrap">
       <Icon name="box" />
@@ -76,8 +76,11 @@ function EdgeHint({ iid }) {
   );
 }
 
-export default function InstalledApps({ installation }) {
+export default function InstalledApps({ installation, access }) {
   const iid = installation.id;
+  // unknown access (other server, still loading): offer everything, IoT Open refuses what is not allowed
+  const canUpdate = access ? access.updateApps : true;
+  const canRemove = access ? access.installApps : true;
   const [rows, setRows] = useState(null);
   const [error, setError] = useState('');
   const [job, setJob] = useState(null);
@@ -122,16 +125,18 @@ export default function InstalledApps({ installation }) {
 
   return (
     <>
-      <EdgeHint iid={iid} />
+      <EdgeHint iid={iid} access={access} />
       {error && <div className="error-box">{error}</div>}
       {rows === null && <p className="muted">Laddar…</p>}
       {rows && !rows.length && !error && (
         <div className="empty">
           <Icon name="app" size={32} />
           <p>Inga edge apps är installerade på den här installationen.</p>
-          <a className="btn primary" href={`#/i/${iid}/add`}>
-            <Icon name="plus" size={16} /> Lägg till app
-          </a>
+          {canRemove && (
+            <a className="btn primary" href={`#/i/${iid}/add`}>
+              <Icon name="plus" size={16} /> Lägg till app
+            </a>
+          )}
         </div>
       )}
       <div className="cards">
@@ -156,7 +161,7 @@ export default function InstalledApps({ installation }) {
                 {!app && <span className="badge warn">Appen finns inte längre i IoT Open</span>}
               </div>
               <div className="card-actions">
-                {update && (
+                {update && canUpdate && (
                   <button
                     type="button"
                     className="btn primary"
@@ -165,15 +170,17 @@ export default function InstalledApps({ installation }) {
                     <Icon name="download" size={16} /> Uppdatera
                   </button>
                 )}
-                {app && (
+                {app && canUpdate && (
                   <button type="button" className="btn" onClick={() => setJob({ mode: 'settings', instance: inst, app })}>
                     <Icon name="settings" size={16} /> Inställningar
                   </button>
                 )}
                 <span className="grow" />
-                <button type="button" className="icon-btn" title="Ta bort" aria-label={`Ta bort ${inst.name}`} onClick={() => setRemoving(inst)}>
-                  <Icon name="trash" size={18} />
-                </button>
+                {canRemove && (
+                  <button type="button" className="icon-btn" title="Ta bort" aria-label={`Ta bort ${inst.name}`} onClick={() => setRemoving(inst)}>
+                    <Icon name="trash" size={18} />
+                  </button>
+                )}
               </div>
             </article>
           );

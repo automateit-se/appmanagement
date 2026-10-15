@@ -9,6 +9,7 @@ import { githubClient } from './github.mjs';
 import { dockerClient } from './docker.mjs';
 import { edgeClients } from './edgeClient.mjs';
 import { presenceChecker } from './presence.mjs';
+import { accessChecker, requireAccess } from './access.mjs';
 
 // App Management backend: serves the built app, relays /api/v2 to IoT Open (API_MODE=proxy), reads edge apps
 // from GitHub and manages IoT Open Docker Edge Clients in the local Docker environment (DOCKER_HOST).
@@ -30,6 +31,7 @@ export function createApp(cfg, opts = {}) {
   const github = githubClient(cfg);
   const edge = cfg.edge.docker ? edgeClients(cfg, dockerClient(cfg.edge.docker), lynx) : null;
   const presence = presenceChecker(cfg, lynx, opts.presence);
+  const access = accessChecker(cfg, lynx);
 
   const authLimit = rateLimiter(10, 60_000);
   const catalogLimit = rateLimiter(120, 60_000);
@@ -50,17 +52,6 @@ export function createApp(cfg, opts = {}) {
     githubInclude: cfg.github.include,
   });
 
-  /** Signed-in user allowed to manage edge clients for this installation. */
-  async function edgeUser(req, iid) {
-    const token = requestToken(req);
-    const user = await lynx.me(token);
-    if (cfg.edge.admins.length) {
-      const ok = cfg.edge.admins.includes(String(user.id)) || cfg.edge.admins.includes(String(user.email || '').toLowerCase());
-      if (!ok) throw new HttpError(403, 'Ditt konto får inte hantera edge clients i App Management (EDGE_ADMINS)');
-    }
-    const inst = await lynx.installation(token, iid);
-    return { token, user, inst };
-  }
 
   async function exclusive(iid, fn) {
     if (busy.has(iid)) throw new HttpError(409, 'En annan åtgärd pågår redan för den här edge clienten');
@@ -85,6 +76,15 @@ export function createApp(cfg, opts = {}) {
       throw new HttpError(404, 'Hittades inte');
     }
 
+    // What the user may do on the installation, from the user's role in IoT Open
+    if ((m = /^\/app-api\/access\/(\d{1,12})$/.exec(p))) {
+      if (req.method !== 'GET') throw new HttpError(405, 'Metoden stöds inte');
+      if (!edgeLimit(ip)) throw new HttpError(429, 'För många anrop, vänta en stund');
+      const a = await access(requestToken(req), Number(m[1]));
+      const { me, inst, ...out } = a;
+      return sendJson(res, 200, { ...out, edgeClients: !!edge });
+    }
+
     // Edge status in IoT Open (is there an edge client, is it online?) - read only, any user with access
     if ((m = /^\/app-api\/presence\/(\d{1,12})$/.exec(p))) {
       if (req.method !== 'GET') throw new HttpError(405, 'Metoden stöds inte');
@@ -99,7 +99,11 @@ export function createApp(cfg, opts = {}) {
       if (!edgeLimit(ip)) throw new HttpError(429, 'För många anrop, vänta en stund');
       const iid = Number(m[1]);
       const sub = m[2] || '';
-      const { token, user, inst } = await edgeUser(req, iid);
+      const token = requestToken(req);
+      const a = await access(token, iid);
+      const { me: user, inst } = a;
+      if (req.method === 'GET') requireAccess(a, a.viewEdge, 'se installationens edge client');
+      else requireAccess(a, a.manageEdge, 'hantera installationens edge client');
       if (req.method === 'GET' && sub === '') return sendJson(res, 200, await edge.status(iid));
       if (req.method === 'GET' && sub === 'logs') return sendJson(res, 200, await edge.logs(iid, url.searchParams.get('tail')));
       if (req.method === 'DELETE' && sub === '') {

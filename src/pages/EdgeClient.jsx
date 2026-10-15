@@ -187,8 +187,10 @@ function Setup({ iid, onCreated }) {
   );
 }
 
-export default function EdgeClient({ installation }) {
+export default function EdgeClient({ installation, access }) {
   const iid = installation.id;
+  // IoT Open decides: gateway/reset/password on the installation (see server/access.mjs)
+  const readOnly = !access?.manageEdge;
   const [st, setSt] = useState(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
@@ -267,7 +269,14 @@ export default function EdgeClient({ installation }) {
       <>
         {error && <div className="error-box">{error}</div>}
         {jobFailed}
-        <Setup iid={iid} onCreated={(s) => (setJobError(null), accept(s))} />
+        {readOnly ? (
+          <div className="info-box">
+            Det finns ingen edge client för installationen här. Din roll i IoT Open ({access?.role || 'okänd'}) får inte sätta upp en; det kräver rätten att
+            byta installationens gateway-credentials.
+          </div>
+        ) : (
+          <Setup iid={iid} onCreated={(s) => (setJobError(null), accept(s))} />
+        )}
       </>
     );
   }
@@ -342,6 +351,9 @@ export default function EdgeClient({ installation }) {
               </>
             )}
           </dl>
+          {readOnly ? (
+            <p className="muted small">Din roll i IoT Open ({access?.role || 'okänd'}) kan se edge clienten men inte ändra den.</p>
+          ) : (
           <div className="row gap wrap">
             {st.running ? (
               <button type="button" className="btn" disabled={!!busy} onClick={() => run('stop', () => backend.edgeAction(iid, 'stop'))}>
@@ -366,6 +378,7 @@ export default function EdgeClient({ installation }) {
               <Icon name="trash" size={16} /> Ta bort
             </button>
           </div>
+          )}
         </section>
       )}
       {st?.exists && <Logs iid={iid} refreshKey={logKey} />}

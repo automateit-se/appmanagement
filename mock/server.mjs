@@ -19,8 +19,29 @@ const PORT = Number(process.env.PORT || 8787);
 const users = [
   { id: 1, email: 'demo@example.com', password: 'demo', first_name: 'Demo', last_name: 'Användare', organizations: [10] },
   { id: 2, email: 'twofa@example.com', password: 'demo', first_name: 'Två', last_name: 'Faktor', organizations: [10], twofa: '123456' },
+  // roles like IoT Open's: an owner of one installation, and a read-only user
+  { id: 3, email: 'owner@example.com', password: 'demo', first_name: 'Ägare', last_name: 'Exempel', organizations: [10], role: 47, assigned: [1001] },
+  { id: 4, email: 'viewer@example.com', password: 'demo', first_name: 'Läsare', last_name: 'Exempel', organizations: [10], role: 48, assigned: [1001, 1002] },
 ];
-const tokens = new Map([['demo-api-key', 1]]);
+const tokens = new Map([['demo-api-key', 1], ['owner-api-key', 3], ['viewer-api-key', 4]]);
+
+// IoT Open roles (the permissions App Management looks at), keyed by role id
+const ROLE_PERMS = {
+  27: { name: 'admin', all: true },
+  47: { name: 'owner', assigned: ['gateway/reset/password', 'edge/app/configured/create_delete', 'edge/app/configured/update', 'edge/app/configured/list'], plain: ['edge/app/create'] },
+  48: { name: 'read_only', assigned: ['edge/app/configured/list'], plain: [] },
+};
+function rolePermissions(id) {
+  const r = ROLE_PERMS[id];
+  const names = ['gateway/reset/password', 'edge/app/configured/create_delete', 'edge/app/configured/update', 'edge/app/configured/list'];
+  const p = {};
+  for (const n of names) {
+    p[`${n}/all`] = !!r.all;
+    p[`${n}/assigned`] = !!r.all || r.assigned.includes(n);
+  }
+  p['edge/app/create'] = !!r.all || r.plain.includes('edge/app/create');
+  return { id: Number(id), name: r.name, priority: 50, permissions: p };
+}
 const pending2fa = new Map();
 
 const installations = [
@@ -355,7 +376,18 @@ async function lynxApi(req, res, p, url) {
     tokens.delete(req.headers['x-api-key']);
     return send(res, 200, { message: 'ok' });
   }
-  if (p === '/api/v2/user/me') return send(res, 200, { id: u.id, email: u.email, first_name: u.first_name, last_name: u.last_name, organisations: u.organizations });
+  if (p === '/api/v2/user/me') {
+    return send(res, 200, {
+      id: u.id, email: u.email, first_name: u.first_name, last_name: u.last_name, organisations: u.organizations,
+      role: u.role || 27, assigned_installations: u.assigned || installations.filter((i) => u.organizations.includes(i.organization_id)).map((i) => i.id),
+    });
+  }
+  if ((m = /^\/api\/v2\/role\/(\d+)$/.exec(p))) {
+    // a user can read its own role; an admin every role
+    const own = Number(m[1]) === (u.role || 27);
+    if (!ROLE_PERMS[m[1]] || (!own && (u.role || 27) !== 27)) return send(res, 403, { message: 'forbidden' });
+    return send(res, 200, rolePermissions(m[1]));
+  }
   if (p === '/api/v2/installationinfo') return send(res, 200, installations.filter((i) => u.organizations.includes(i.organization_id)));
   if ((m = /^\/api\/v2\/(devicex|functionx)\/(\d+)$/.exec(p))) {
     if (!canSee(u, m[2])) return send(res, 403, { message: 'forbidden' });

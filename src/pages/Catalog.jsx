@@ -11,7 +11,7 @@ import { InstallDialog } from '../components/InstallDialog.jsx';
 
 const fmtDate = (s) => (s ? new Date(s).toLocaleDateString('sv-SE') : '');
 
-function GithubDetail({ item, twin, onClose, onInstall, onOpenTwin }) {
+function GithubDetail({ item, twin, canInstall, onClose, onInstall, onOpenTwin }) {
   const [d, setD] = useState(null);
   const [error, setError] = useState('');
   const [tag, setTag] = useState('');
@@ -39,7 +39,7 @@ function GithubDetail({ item, twin, onClose, onInstall, onOpenTwin }) {
           <button type="button" className="btn" onClick={onClose}>
             Stäng
           </button>
-          <button type="button" className="btn primary" disabled={!v} onClick={() => onInstall({ mode: 'install', title: item.name, github: { owner: d.owner, repo: d.repo, tag: v.tag } })}>
+          <button type="button" className="btn primary" disabled={!v || !canInstall} title={canInstall ? undefined : 'Din roll i IoT Open får inte installera appar här'} onClick={() => onInstall({ mode: 'install', title: item.name, github: { owner: d.owner, repo: d.repo, tag: v.tag } })}>
             Installera{v && !v.unreleased ? ` ${v.name}` : ''}
           </button>
         </>
@@ -96,7 +96,7 @@ function GithubDetail({ item, twin, onClose, onInstall, onOpenTwin }) {
   );
 }
 
-function IotOpenDetail({ app, repo, onClose, onInstall }) {
+function IotOpenDetail({ app, repo, canInstall, onClose, onInstall }) {
   const [versions, setVersions] = useState(null);
   const [version, setVersion] = useState('');
   const [error, setError] = useState('');
@@ -126,7 +126,7 @@ function IotOpenDetail({ app, repo, onClose, onInstall }) {
           <button type="button" className="btn" onClick={onClose}>
             Stäng
           </button>
-          <button type="button" className="btn primary" disabled={!version} onClick={() => onInstall({ mode: 'install', title: app.name, app, version })}>
+          <button type="button" className="btn primary" disabled={!version || !canInstall} title={canInstall ? undefined : 'Din roll i IoT Open får inte installera appar här'} onClick={() => onInstall({ mode: 'install', title: app.name, app, version })}>
             Installera{version ? ` ${version}` : ''}
           </button>
         </>
@@ -155,8 +155,9 @@ function IotOpenDetail({ app, repo, onClose, onInstall }) {
   );
 }
 
-export default function Catalog({ installation }) {
+export default function Catalog({ installation, access }) {
   const iid = installation.id;
+  const canInstall = access ? access.installApps : true;
   const [gh, setGh] = useState(null);
   const [ghError, setGhError] = useState('');
   const [io, setIo] = useState(null);
@@ -272,6 +273,7 @@ export default function Catalog({ installation }) {
 
       {open?.kind === 'github' && (
         <GithubDetail
+          canInstall={canInstall}
           item={open.item}
           twin={twinOf(open.item)}
           onClose={() => setOpen(null)}
@@ -279,7 +281,7 @@ export default function Catalog({ installation }) {
           onOpenTwin={() => setOpen({ kind: 'iotopen', item: twinOf(open.item) })}
         />
       )}
-      {open?.kind === 'iotopen' && <IotOpenDetail app={open.item} repo={open.repo} onClose={() => setOpen(null)} onInstall={(j) => (setOpen(null), setJob(j))} />}
+      {open?.kind === 'iotopen' && <IotOpenDetail app={open.item} repo={open.repo} canInstall={canInstall} onClose={() => setOpen(null)} onInstall={(j) => (setOpen(null), setJob(j))} />}
       {job && (
         <InstallDialog
           installation={installation}
