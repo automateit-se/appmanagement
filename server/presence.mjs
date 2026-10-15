@@ -88,7 +88,8 @@ export function presenceChecker(cfg, lynx, { timeoutMs = 3500 } = {}) {
     cache(`${inst.id}|${createHash('sha256').update(token).digest('hex')}`, async () => {
       const topic = `${inst.client_id}/${STATUS_TOPIC}`;
       const [m, s] = await Promise.all([viaMqtt(mqttUrl, token, topic, timeoutMs), viaStatusApi(lynx, token, inst.id, inst.client_id)]);
-      const r = m.state ? m : s.state ? s : null;
+      // MQTT carries a bare 1/0; IoT Open's status API knows when it was published
+      const r = m.state ? { ...m, since: m.since || (s.state === m.state ? s.since : null) } : s.state ? s : null;
       return r ? { state: r.state, since: r.since || null, source: r.source, topic } : { state: 'unknown', reason: m.reason || 'no-message', topic };
     });
 }

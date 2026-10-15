@@ -10,9 +10,13 @@ import { Confirm, errText } from '../components/Modal.jsx';
 import { InstallDialog } from '../components/InstallDialog.jsx';
 import { PresenceBadge, usePresence } from '../components/EdgePresence.jsx';
 
-/** Latest version available for an IoT Open app: from GitHub when it came from there, else from IoT Open. */
-async function latestFor(app) {
-  const gh = githubRepo(app.source_url);
+/**
+ * Latest version available for an IoT Open app: from GitHub when the organization publishes it from there through
+ * App Management, else the newest version published in IoT Open (also for other publishers' apps whose source is
+ * on GitHub - only their publisher can add versions).
+ */
+async function latestFor(app, orgId) {
+  const gh = Number(app.publisher?.id) === Number(orgId) ? githubRepo(app.source_url) : null;
   if (gh) {
     try {
       const d = await backend.repo(gh.owner, gh.repo);
@@ -86,7 +90,7 @@ export default function InstalledApps({ installation }) {
       const list = (await lynx.instances(iid)) || [];
       const ids = [...new Set(list.map((i) => i.app_id))];
       const apps = Object.fromEntries(await Promise.all(ids.map(async (id) => [id, await lynx.edgeApp(id).catch(() => null)])));
-      const latest = Object.fromEntries(await Promise.all(ids.map(async (id) => [id, apps[id] ? await latestFor(apps[id]) : null])));
+      const latest = Object.fromEntries(await Promise.all(ids.map(async (id) => [id, apps[id] ? await latestFor(apps[id], installation.organization_id) : null])));
       setRows(
         list
           .map((inst) => ({ inst, app: apps[inst.app_id], latest: latest[inst.app_id] }))
@@ -96,7 +100,7 @@ export default function InstalledApps({ installation }) {
       setError(errText(e));
       setRows([]);
     }
-  }, [iid]);
+  }, [iid, installation.organization_id]);
 
   useEffect(() => {
     load();

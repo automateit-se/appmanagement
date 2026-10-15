@@ -191,6 +191,22 @@ function Repeat({ name, input, inputs, value, onChange, pick, errors, path }) {
 function Control({ name, input, inputs, value, onChange, pick, errors, path }) {
   const kind = inputKind(input);
   const id = `cfg-${path}`;
+  if (kind === 'toggle' && (input.true_value !== undefined || input.false_value !== undefined)) {
+    // the app names both positions (e.g. "under" / "over"): show them, not an on/off box
+    const opts = [
+      [toggleOff(input), false],
+      [toggleOn(input), true],
+    ];
+    return (
+      <div className="seg" role="radiogroup" id={id}>
+        {opts.map(([v, on]) => (
+          <button key={String(on)} type="button" role="radio" aria-checked={isToggleOn(input, value) === on} className={isToggleOn(input, value) === on ? 'on' : ''} onClick={() => onChange(v)}>
+            {String(v)}
+          </button>
+        ))}
+      </div>
+    );
+  }
   if (kind === 'toggle') {
     return (
       <label className="check">

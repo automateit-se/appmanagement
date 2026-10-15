@@ -75,9 +75,10 @@ export function githubClient(cfg) {
       throw new HttpError(502, `Kunde inte nå GitHub: ${e.message}`);
     }
     if (r.status === 404 && optional) return null;
-    if (r.status === 403 || r.status === 429) {
+    if (r.status === 429 || (r.status === 403 && (r.headers.get('x-ratelimit-remaining') === '0' || /rate limit/i.test(await r.clone().text().catch(() => ''))))) {
       throw new HttpError(503, 'GitHub begränsar antalet anrop just nu. Försök igen om en stund, eller ge tjänsten en GITHUB_TOKEN.');
     }
+    if (r.status === 403) throw new HttpError(502, 'GitHub nekade anropet (403). Kontrollera att tjänsten når api.github.com.');
     if (r.status === 404) throw new HttpError(404, 'Hittades inte på GitHub');
     if (!r.ok) throw new HttpError(502, `GitHub svarade HTTP ${r.status}`);
     if (!raw) return r.json();
@@ -155,10 +156,10 @@ export function githubClient(cfg) {
           searches.push(get(`${gh.apiUrl}/repos/${inc.owner}/${inc.pattern}`, { optional: true }).then((r) => (r ? { items: [r] } : { items: [] })));
         }
       }
-      for (const res of await Promise.all(searches.map((p) => p.catch((e) => ({ error: e, items: [] }))))) {
-        if (res.error && searches.length === 1) throw res.error;
-        (res.items || []).forEach(add);
-      }
+      const results = await Promise.all(searches.map((p) => p.catch((e) => ({ error: e, items: [] }))));
+      // one source failing (e.g. a missing repository) still lists the others; all failing is an error
+      if (results.every((r) => r.error)) throw results[0].error;
+      for (const res of results) (res.items || []).forEach(add);
       const repos = [...found.values()];
       const mans = await mapLimit(repos, 6, (r) => manifest(r.owner.login, r.name, r.default_branch || 'main').catch(() => null));
       return repos.map((r, i) => summary(r, mans[i])).sort((a, b) => a.name.localeCompare(b.name, 'sv'));

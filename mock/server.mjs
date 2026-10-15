@@ -75,8 +75,15 @@ const edgeApps = [
     created: now() - 86400 * 50, updated: now() - 86400 * 50,
     versions: [{ name: '1.0.0', hash: hash(), timestamp: now() - 86400 * 50, app_json: JSON.stringify({ input: {}, guide: [] }), app_lua: '-- door counter 1.0.0\n' }],
   },
+  {
+    // published from GitHub by another organization (like IoT Open's own apps): installed from IoT Open, not copied
+    id: 3, name: 'Value logger', category: 'logger', tags: ['logger'], short_description: 'Logs values to a file',
+    description: '# Value logger', publisher: { id: 3, name: 'IoT Open' }, official: false, public: true,
+    source_url: 'https://github.com/example-org/value-logger', created: now() - 86400 * 30, updated: now() - 86400 * 30,
+    versions: [{ name: '1.2.0', hash: hash(), timestamp: now() - 86400 * 30, app_json: JSON.stringify({ input: { level: { type: 'toggle', name: 'Level', true_value: 'high', false_value: 'low' } }, guide: [] }), app_lua: '-- value logger\n' }],
+  },
 ];
-let nextAppId = 3;
+let nextAppId = 4;
 const instances = [{ id: 9001, app_id: 1, installation_id: 1001, version: '1.0.0', name: 'Väderdata', config: { city: 'Stockholm', interval: 30 }, created: now() - 86400 * 100, updated: now() - 86400 * 100 }];
 let nextInstanceId = 9002;
 
@@ -170,6 +177,12 @@ const repos = {
         lua: '-- light control 2.0.0\n', at: '2026-09-20T10:00:00Z', notes: '',
       },
     },
+  },
+  'example-org/value-logger': {
+    description: 'Logs values to a file',
+    topics: ['iotopen-edge-app', 'logger'],
+    readme: '# Value logger\n',
+    releases: { 'v1.2.0': { json: { input: {}, guide: [] }, lua: '-- value logger\n', at: '2026-09-01T10:00:00Z', notes: '' } },
   },
   // Like IoT Open's own edge apps: no topic, no releases or tags, branch "master", metadata in edge-app.json.
   // Listed through GITHUB_INCLUDE=example-vendor/edge-app-*.

@@ -96,7 +96,7 @@ function GithubDetail({ item, twin, onClose, onInstall, onOpenTwin }) {
   );
 }
 
-function IotOpenDetail({ app, onClose, onInstall }) {
+function IotOpenDetail({ app, repo, onClose, onInstall }) {
   const [versions, setVersions] = useState(null);
   const [version, setVersion] = useState('');
   const [error, setError] = useState('');
@@ -117,6 +117,11 @@ function IotOpenDetail({ app, onClose, onInstall }) {
       onClose={onClose}
       footer={
         <>
+          {repo && (
+            <a className="btn" href={repo.url} target="_blank" rel="noopener noreferrer">
+              <Icon name="github" size={16} /> GitHub
+            </a>
+          )}
           <span className="grow" />
           <button type="button" className="btn" onClick={onClose}>
             Stäng
@@ -184,6 +189,10 @@ export default function Catalog({ installation }) {
   // apps that came from GitHub through App Management are listed once, under GitHub
   const ioShown = (io || []).filter((a) => !(githubRepo(a.source_url) && ghUrls.has(normUrl(a.source_url)))).filter((a) => hit(a.name, a.short_description, ...(a.tags || [])));
   const ghShown = (gh || []).filter((r) => hit(r.name, r.description, r.id, ...(r.topics || [])));
+  // the GitHub repository is already published in IoT Open by another organization (e.g. IoT Open's own apps):
+  // install that app and its published versions instead of making a copy in this organization
+  const publishedElsewhere = (r) =>
+    (io || []).find((a) => normUrl(a.source_url) === normUrl(r.url) && Number(a.publisher?.id) !== Number(installation.organization_id));
   // an app already in IoT Open under the same name, from another publisher (e.g. IoT Open's own copy of its GitHub app)
   const twinOf = (r) => (io || []).find((a) => a.name?.trim().toLowerCase() === r.name.trim().toLowerCase() && normUrl(a.source_url) !== normUrl(r.url));
 
@@ -211,7 +220,12 @@ export default function Catalog({ installation }) {
       {gh && !ghShown.length && !ghError && <p className="muted">{needle ? 'Ingen app matchar sökningen.' : 'Hittade inga appar på GitHub.'}</p>}
       <div className="cards">
         {ghShown.map((r) => (
-          <button type="button" key={r.id} className="card pick" onClick={() => setOpen({ kind: 'github', item: r })}>
+          <button
+            type="button"
+            key={r.id}
+            className="card pick"
+            onClick={() => (publishedElsewhere(r) ? setOpen({ kind: 'iotopen', item: publishedElsewhere(r), repo: r }) : setOpen({ kind: 'github', item: r }))}
+          >
             <header className="card-head">
               <Icon name="github" className="card-icon" />
               <div className="grow">
@@ -221,6 +235,7 @@ export default function Catalog({ installation }) {
             </header>
             <p className="small card-text">{r.description}</p>
             <div className="badges">
+              {publishedElsewhere(r) && <span className="badge">Publicerad i IoT Open av {publishedElsewhere(r).publisher?.name || 'IoT Open'}</span>}
               {r.topics.slice(0, 4).map((t) => (
                 <span key={t} className="badge">
                   {t}
@@ -264,7 +279,7 @@ export default function Catalog({ installation }) {
           onOpenTwin={() => setOpen({ kind: 'iotopen', item: twinOf(open.item) })}
         />
       )}
-      {open?.kind === 'iotopen' && <IotOpenDetail app={open.item} onClose={() => setOpen(null)} onInstall={(j) => (setOpen(null), setJob(j))} />}
+      {open?.kind === 'iotopen' && <IotOpenDetail app={open.item} repo={open.repo} onClose={() => setOpen(null)} onInstall={(j) => (setOpen(null), setJob(j))} />}
       {job && (
         <InstallDialog
           installation={installation}
