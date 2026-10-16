@@ -264,6 +264,18 @@ test('EDGE_ADMINS restricts edge client management', async () => {
   s2.server.close();
 });
 
+test('EDGE_ADMINS accepts an e-mail domain', async () => {
+  const acc = async (s) => (await fetch(s.url + '/app-api/access/1001', { headers: { 'X-API-Key': KEY } })).json();
+  for (const [admins, allowed] of [['@example.com', true], ['*@Example.com', true], ['@other.example', false], ['@ample.com', false], ['example.com', false]]) {
+    const s = await start(envFor({ EDGE_ADMINS: admins }));
+    const a = await acc(s);
+    assert.equal(a.manageEdge, allowed, admins);
+    assert.equal(a.restrictedBy, allowed ? null : 'EDGE_ADMINS', admins);
+    assert.equal(a.viewEdge, true, admins);
+    s.server.close();
+  }
+});
+
 test('without DOCKER_HOST edge clients are off', async () => {
   const s = await start(envFor({ DOCKER_HOST: '' }));
   assert.equal((await (await fetch(s.url + '/config.json')).json()).edgeClients, 'false');

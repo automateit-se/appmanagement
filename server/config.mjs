@@ -100,7 +100,8 @@ export function loadConfig(env = process.env) {
       docker: parseDockerHost(env.DOCKER_HOST),
       image: edgeImage,
       network: edgeNetwork,
-      admins: list(env.EDGE_ADMINS).map((s) => s.toLowerCase()),
+      // e-mail, user id or a whole e-mail domain ("@example.com" or "*@example.com")
+      admins: list(env.EDGE_ADMINS).map((s) => s.toLowerCase().replace(/^\*@/, '@')),
     },
   };
 }

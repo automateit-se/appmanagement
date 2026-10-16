@@ -271,8 +271,10 @@ export default function EdgeClient({ installation, access }) {
         {jobFailed}
         {readOnly ? (
           <div className="info-box">
-            Det finns ingen edge client för installationen här. Din roll i IoT Open ({access?.role || 'okänd'}) får inte sätta upp en; det kräver rätten att
-            byta installationens gateway-credentials.
+            Det finns ingen edge client för installationen här.{' '}
+            {access?.restrictedBy === 'EDGE_ADMINS'
+              ? 'På den här servern får bara utvalda användare sätta upp edge clients. Kontakta den som driftar App Management.'
+              : `Din roll i IoT Open (${access?.role || 'okänd'}) får inte sätta upp en; det kräver rätten att byta installationens gateway-credentials.`}
           </div>
         ) : (
           <Setup iid={iid} onCreated={(s) => (setJobError(null), accept(s))} />
@@ -352,7 +354,11 @@ export default function EdgeClient({ installation, access }) {
             )}
           </dl>
           {readOnly ? (
-            <p className="muted small">Din roll i IoT Open ({access?.role || 'okänd'}) kan se edge clienten men inte ändra den.</p>
+            <p className="muted small">
+              {access?.restrictedBy === 'EDGE_ADMINS'
+                ? 'Du kan se edge clienten. På den här servern får bara utvalda användare ändra den.'
+                : `Din roll i IoT Open (${access?.role || 'okänd'}) kan se edge clienten men inte ändra den.`}
+            </p>
           ) : (
           <div className="row gap wrap">
             {st.running ? (

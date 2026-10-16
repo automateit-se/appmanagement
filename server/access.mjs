@@ -13,7 +13,18 @@ import { HttpError, ttlCache } from './http.mjs';
 //
 // IoT Open checks the same permissions on its own API; App Management uses them for what only it does (the
 // Docker side of edge clients) and to show only what the user can actually do.
-// EDGE_ADMINS, when set, is an extra restriction on top: only those users may manage edge clients.
+// EDGE_ADMINS, when set, is an extra restriction on top: only those users may manage edge clients. An entry is a user id,
+// an e-mail address or an e-mail domain ("@example.com"), matched against the e-mail IoT Open reports for the user
+// (/user/me, also when signed in with an API key: the key belongs to a user).
+
+/** Whether the IoT Open user `me` is allowed by EDGE_ADMINS (everyone when it is empty). */
+export function edgeAdmin(admins, me) {
+  if (!admins.length) return true;
+  const email = String(me?.email || '').trim().toLowerCase();
+  const at = email.lastIndexOf('@');
+  const domain = at > 0 ? email.slice(at) : null;
+  return admins.some((a) => a === String(me?.id) || (email && a === email) || (domain && a === domain));
+}
 
 const key = (token) => createHash('sha256').update(token).digest('hex');
 
@@ -41,7 +52,7 @@ export function accessChecker(cfg, lynx) {
     const perms = role?.permissions || {};
     const can = (name) => perms[`${name}/all`] === true || (perms[`${name}/assigned`] === true && assigned);
 
-    const listed = !cfg.edge.admins.length || cfg.edge.admins.includes(String(me.id)) || cfg.edge.admins.includes(String(me.email || '').toLowerCase());
+    const listed = edgeAdmin(cfg.edge.admins, me);
     const known = role !== null;
     const manageEdge = known && can('gateway/reset/password') && listed;
     return {
@@ -65,7 +76,7 @@ export function accessChecker(cfg, lynx) {
 export function requireAccess(a, allowed, what) {
   if (allowed) return;
   const why = a.restrictedBy === 'EDGE_ADMINS'
-    ? 'App Management är inställt på att bara låta vissa användare hantera edge clients (EDGE_ADMINS).'
+    ? 'På den här servern får bara utvalda användare sätta upp och hantera edge clients (EDGE_ADMINS).'
     : !a.known
       ? 'Dina behörigheter i IoT Open gick inte att läsa.'
       : `Din roll i IoT Open (${a.role || 'okänd'}) ger inte den behörigheten för installationen.`;
