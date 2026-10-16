@@ -117,11 +117,42 @@ const publicApp = ({ versions, ...a }) => a;
 // "Kontoret" (1002) already has an edge client somewhere that is online; "Demohuset" (1001) has none.
 const retained = new Map([['5002/box/event/status', '1']]);
 const mqttClients = new Set();
+const subscribed = (c, topic) => [...c.topics].some((pat) => mqttMatch(pat, topic));
+function mqttMatch(pattern, topic) {
+  const p = pattern.split('/');
+  const t = topic.split('/');
+  for (let i = 0; i < p.length; i++) {
+    if (p[i] === '#') return true;
+    if (i >= t.length || (p[i] !== '+' && p[i] !== t[i])) return false;
+  }
+  return p.length === t.length;
+}
 function setEdgeStatus(clientId, online) {
   const topic = `${clientId}/box/event/status`;
   retained.set(topic, online ? '1' : '0');
-  for (const c of mqttClients) if (c.authed && c.topics.has(topic)) mqttSend(c, topic, online ? '1' : '0', true);
+  for (const c of mqttClients) if (c.authed && subscribed(c, topic)) mqttSend(c, topic, online ? '1' : '0', true);
 }
+
+// What edge apps publish on obj/… and evt/…: IoT Open's message history (GET /api/v3beta/log) and live on MQTT.
+// "Demohuset" has a door counter logging on obj and raising alarms on evt, "Kontoret" a weather app on obj.
+const messageLog = []; // { client_id, installation_id, topic, value, msg, timestamp }, oldest first
+function publishApp(inst, topic, value, msg, at = Date.now()) {
+  const m = { client_id: inst.client_id, installation_id: inst.id, topic: `${inst.client_id}/${topic}`, value, msg, timestamp: at / 1000 };
+  messageLog.push(m);
+  if (messageLog.length > 20000) messageLog.splice(0, messageLog.length - 20000);
+  const text = JSON.stringify({ value, msg, timestamp: m.timestamp });
+  for (const c of mqttClients) if (c.authed && subscribed(c, m.topic)) mqttSend(c, m.topic, text, false);
+}
+let doorCount = 0;
+function appTraffic(at) {
+  const [demo, office] = [installations[0], installations[1]];
+  doorCount++;
+  publishApp(demo, 'obj/doorcounter/9001/log', doorCount, `Door opened, ${doorCount} today`, at);
+  if (doorCount % 5 === 0) publishApp(demo, 'evt/doorcounter/9001/alarm', 1, 'Door held open for 60 s', at);
+  publishApp(office, 'obj/weather/office/temperature', 18 + (doorCount % 7) / 2, '', at);
+}
+// three hours of history, then a message every few seconds
+for (let t = Date.now() - 3 * 3600_000; t < Date.now(); t += 5 * 60_000) appTraffic(t);
 
 // ---------------------------------------------------------------- GitHub
 
@@ -394,6 +425,18 @@ const canSee = (u, iid) => !!u && installations.some((i) => i.id === Number(iid)
 
 // ---------------------------------------------------------------- routes
 
+function logApi(res, iid, url) {
+  const inst = installations.find((i) => i.id === Number(iid));
+  const from = Number(url.searchParams.get('from') || Date.now() / 1000 - 86400);
+  const to = Number(url.searchParams.get('to') || Date.now() / 1000);
+  const limit = Math.min(10000, Number(url.searchParams.get('limit') || 10000));
+  const topics = url.searchParams.getAll('topics').flatMap((t) => t.split(','));
+  let list = messageLog.filter((m) => m.installation_id === inst.id && m.timestamp >= from && m.timestamp <= to && (!topics.length || topics.includes(m.topic)));
+  list = list.reverse(); // newest first, like IoT Open
+  const data = list.slice(0, limit);
+  return send(res, 200, { count: data.length, total: list.length, last: data.at(-1)?.timestamp || 0, data });
+}
+
 async function lynxApi(req, res, p, url) {
   let m;
   if (p === '/api/v2/auth' && req.method === 'POST') {
@@ -423,6 +466,16 @@ async function lynxApi(req, res, p, url) {
   if (p === '/api/v2/auth' && req.method === 'DELETE') {
     tokens.delete(req.headers['x-api-key']);
     return send(res, 200, { message: 'ok' });
+  }
+  if ((m = /^\/api\/v3beta\/log\/(\d+)$/.exec(p))) {
+    if (!canSee(u, m[1])) return send(res, 403, { message: 'forbidden' });
+    return logApi(res, m[1], url);
+  }
+  if ((m = /^\/api\/v2\/status\/(\d+)$/.exec(p))) {
+    if (!canSee(u, m[1])) return send(res, 403, { message: 'forbidden' });
+    const last = new Map();
+    for (const x of messageLog) if (x.installation_id === Number(m[1]) && x.topic.split('/')[1] === 'obj') last.set(x.topic, x);
+    return send(res, 200, [...last.values()].map((x) => ({ ...x, value: String(x.value), timestamp: String(x.timestamp) })));
   }
   if (p === '/api/v2/user/me') {
     return send(res, 200, {
@@ -760,7 +813,7 @@ function handleMqtt(c, type, body) {
       rc.push(0);
     }
     wsSend(c.socket, [0x90, 2 + rc.length, body[0], body[1], ...rc]);
-    for (const t of fresh) if (retained.has(t)) mqttSend(c, t, retained.get(t), true);
+    for (const t of fresh) for (const [rt, v] of retained) if (mqttMatch(t, rt)) mqttSend(c, rt, v, true);
   } else if (type === 12) wsSend(c.socket, [0xd0, 0]);
 }
 function mqttUpgrade(req, socket) {
@@ -832,6 +885,9 @@ export function createMock() {
     }
   });
   server.on('upgrade', mqttUpgrade);
+  const traffic = setInterval(() => appTraffic(Date.now()), Number(process.env.MOCK_TRAFFIC_MS) || 3000);
+  traffic.unref();
+  server.on('close', () => clearInterval(traffic));
   return server;
 }
 

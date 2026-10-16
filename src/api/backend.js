@@ -31,6 +31,37 @@ export const backend = {
   /** Health of the apps on the local edge client: { exists, running, memory, apps: { [instance]: … }, byLogic } */
   edgeApps: (iid) => call(`edge/${iid}/apps`),
   edgeAppLogs: (iid, instance, logic) => call(`edge/${iid}/apps/${instance}/logs${logic ? `?logic=${seg(logic)}` : ''}`),
+  /** obj/evt topics with messages lately: { hours, truncated, topics: [{ topic, kind, count, last }] } */
+  mqttTopics: (iid, hours = 1) => call(`mqtt/${iid}/topics?hours=${hours}`),
+  /** Earlier messages on topic patterns: { hours, truncated, messages: [{ time, topic, kind, value, msg }] } */
+  mqttHistory: (iid, topics, hours = 24) => call(`mqtt/${iid}/history?topics=${seg(topics.join(','))}&hours=${hours}`),
+  /**
+   * New messages on topic patterns as they come, until `signal` aborts. Server-sent events read with fetch, so the
+   * token can travel in a header (EventSource cannot send one). onEvent(type, data): state | message | dropped | end
+   */
+  async mqttLive(iid, topics, onEvent, signal) {
+    const headers = { Accept: 'text/event-stream' };
+    const t = getToken();
+    if (t) headers['X-API-Key'] = t;
+    const res = await fetch(appUrl(`app-api/mqtt/${iid}/live?topics=${seg(topics.join(','))}`), { headers, signal });
+    if (!res.ok) throw await parseError(res);
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let i;
+      while ((i = buf.indexOf('\n\n')) >= 0) {
+        const block = buf.slice(0, i);
+        buf = buf.slice(i + 2);
+        const type = /^event: (.*)$/m.exec(block)?.[1];
+        const data = /^data: (.*)$/m.exec(block)?.[1];
+        if (type && data) onEvent(type, JSON.parse(data));
+      }
+    }
+  },
   edgeCreate: (iid, replaceOnline = false) => call(`edge/${iid}`, { method: 'POST', body: { confirm: true, replaceOnline } }),
   edgeRenew: (iid) => call(`edge/${iid}/credentials`, { method: 'POST', body: { confirm: true } }),
   edgeAction: (iid, action) => call(`edge/${iid}/${action}`, { method: 'POST', body: {} }),

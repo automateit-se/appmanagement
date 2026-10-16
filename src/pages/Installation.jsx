@@ -7,11 +7,13 @@ import { Icon } from '../components/icons.jsx';
 import InstalledApps from './InstalledApps.jsx';
 import Catalog from './Catalog.jsx';
 import EdgeClient from './EdgeClient.jsx';
+import Mqtt from './Mqtt.jsx';
 
 const TABS = [
   { id: '', label: 'Installerade appar', icon: 'app' },
   { id: 'add', label: 'Lägg till app', icon: 'plus' },
   { id: 'edge', label: 'Edge client', icon: 'box' },
+  { id: 'mqtt', label: 'MQTT', icon: 'activity' },
 ];
 
 /**
@@ -51,7 +53,12 @@ export default function Installation({ iid, tab }) {
       </div>
     );
   }
-  const tabs = TABS.filter((t) => t.id !== 'edge' || (config.edgeClients && (access?.viewEdge || access?.manageEdge)));
+  const tabs = TABS.filter(
+    (t) =>
+      (t.id !== 'edge' || (config.edgeClients && (access?.viewEdge || access?.manageEdge))) &&
+      // read through App Management's backend, which talks to its own IoT Open server only
+      (t.id !== 'mqtt' || onDefaultServer()),
+  );
   // the edge tab appears once the access is known; a link straight to it is kept meanwhile
   const current = tabs.some((t) => t.id === tab) || (tab === 'edge' && access === undefined) ? tab : '';
   return (
@@ -81,6 +88,7 @@ export default function Installation({ iid, tab }) {
       )}
       {current === '' && <InstalledApps installation={inst} access={access || null} />}
       {current === 'add' && <Catalog installation={inst} access={access || null} />}
+      {current === 'mqtt' && <Mqtt installation={inst} />}
       {current === 'edge' && (access === undefined ? <p className="muted">Laddar…</p> : <EdgeClient installation={inst} access={access} />)}
     </div>
   );

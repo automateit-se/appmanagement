@@ -6,7 +6,8 @@ Manage IoT Open **Edge Apps** for your installations from one place. It is built
 - **Settings as a form.** The app's `app.json` describes its settings; App Management renders them as a form and validates them before saving. All input types in IoT Open's [app.json documentation](https://lynx.iotopen.se/tech/docs/platform/edgeapps/app_json.html) are supported: text (also multiline, with `validator`), number, option, checkbox, toggle, function and device selectors (also with a `value` per selected function), notification output selectors and repeat. The form is generic: what it shows is decided by each app's own `app.json`, and an unknown type can still be edited as JSON.
 - **Updates.** When a newer release exists on GitHub (or a newer version in IoT Open), the installed app shows *New version* (*Ny version*) and can be updated with its current settings.
 - **Existing apps.** Apps that already exist in IoT Open (official apps, or the organization's own) are listed too and can be installed, configured and updated the same way.
-- **IoT Open Docker Edge Client.** No edge client? App Management can start one ([ghcr.io/iotopen/edge-client](https://github.com/IoTOpen/docker-edge-client)) in the same Docker environment it runs in. It creates the installation's credentials through the IoT Open API and writes them straight into the edge client's own volume. The page shows whether it runs, its log with errors highlighted, and lets you stop, start, restart, update or remove it.
+- **IoT Open Docker Edge Client.** No edge client? App Management can start one ([ghcr.io/iotopen/edge-client](https://github.com/IoTOpen/docker-edge-client)) in the same Docker environment it runs in. It creates the installation's credentials through the IoT Open API and writes them straight into the edge client's own volume. The page shows whether it runs, its log with errors highlighted, and lets you stop, start, restart, update or remove it. For each installed app it shows whether it runs, its memory, crashes and its own log.
+- **Messages on MQTT.** What apps publish on `obj/…` and `evt/…` can be found, picked and followed (history and live) under *MQTT*, wherever the edge client runs, and kept as an app's log on its card.
 
 > The user interface is in Swedish. UI labels in this document are given in English with the Swedish label in parentheses.
 
@@ -137,6 +138,19 @@ Updating an installed app runs the same steps for the new version and then `PUT 
 
 Creating apps requires that the organization is an edge app publisher in IoT Open and that the user may publish for it. Installing apps that already exist only needs access to the installation.
 
+### Logging to MQTT
+
+Apps choose their own topics, and App Management lets the user find and pick them (see [Messages on MQTT](#messages-on-mqtt)). For new apps, this convention makes their log easy to find and read:
+
+- Topic `obj/<app>/<instance id>/log`, for example `obj/doorcounter/1234/log` (`app.id` is the instance id). `obj` is kept in IoT Open's history; use `evt/<app>/<instance id>/<event>` for events that are only of interest when they happen.
+- Payload as IoT Open's own messages: `{ "value": <number>, "msg": "<text>", "timestamp": <unix seconds> }`. App Management shows `msg`, else `value`.
+
+```lua
+local function logMqtt(text, value)
+    mq:pub("obj/doorcounter/" .. app.id .. "/log", json:encode({ value = value or 0, msg = text, timestamp = edge:time() }), false, 0)
+end
+```
+
 ## IoT Open Docker Edge Client
 
 *Edge client → Set up edge client* (*Edge client → Sätt upp edge client*):
@@ -177,3 +191,13 @@ For an installation whose edge client runs here, every installed app shows its h
 IoT Open's edge client runs one process per app and writes the app's log lines with the instance id as prefix (`edge-app-<id>[<pid>]: …`). The backend reads the container's process list (Docker's `top`, which runs `ps` on the host) and its log; nothing is run inside the container. Error lines are recognised by their text, since the edge client logs information and errors the same way.
 
 See [SECURITY.md](SECURITY.md) before giving App Management access to Docker.
+
+## Messages on MQTT
+
+*MQTT* on an installation shows what its apps publish on `obj/…` and `evt/…`, wherever the edge client runs (here, on a gateway or a Raspberry Pi). Everything is read with the signed-in user's own token, so IoT Open decides what the user may see.
+
+- **Topics with messages** (*Topics med meddelanden*): the topics that had messages in the last hour, 6 hours or day, with the number of messages and the latest one, plus the latest value of every obj topic. Pick topics, or write a pattern with `+` (one level) and `#` (the rest), for example `obj/doorcounter/#`.
+- **Messages** (*Meddelanden*): earlier messages from IoT Open's history (`GET /api/v3beta/log/{installation}`, up to 7 days) and new ones live, with a filter. A message shows its `msg`, else its `value`; a click shows all of it. IoT Open returns at most 10 000 messages per request, and filters on exact topics only, so with wildcards on a busy installation the oldest messages of a long period can be missing (the page says so).
+- **Keep as an app's log** (*Spara som logg för*): the picked topics are kept for an app in this browser, and the app's card gets *MQTT log* (*MQTT-logg*).
+
+Live messages come from an MQTT subscription (WebSocket to `LYNX_URL/mqtt`) that the backend holds for the open page and sends on as server-sent events: at most 50 messages per second, for 15 minutes at a time. Only `obj/` and `evt/` can be read, at most 10 patterns at a time. It needs App Management's own IoT Open server (not another server picked at sign-in).

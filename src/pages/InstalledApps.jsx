@@ -10,6 +10,7 @@ import { Confirm, errText } from '../components/Modal.jsx';
 import { InstallDialog } from '../components/InstallDialog.jsx';
 import { PresenceBadge, usePresence } from '../components/EdgePresence.jsx';
 import { AppHealthPanel, instanceHealth, useAppHealth } from '../components/AppHealth.jsx';
+import { AppMqtt } from '../components/MqttLog.jsx';
 
 /**
  * Latest version available for an IoT Open app: from GitHub when the organization publishes it from there through
@@ -161,6 +162,7 @@ export default function InstalledApps({ installation, access }) {
               {health && (
                 <AppHealthPanel iid={iid} inst={inst} health={instanceHealth(health, inst)} windowSec={health.windowSec} canRestart={canUpdate} onRestarted={reloadHealth} />
               )}
+              {onDefaultServer() && <AppMqtt iid={iid} inst={inst} />}
               <div className="badges">
                 {latest?.source === 'github' ? <span className="badge">GitHub</span> : <span className="badge">IoT Open</span>}
                 {update && <span className="badge accent">Ny version {latest.version}</span>}

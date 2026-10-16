@@ -42,6 +42,7 @@ before(async () => {
   writeFileSync(path.join(staticDir, 'index.html'), '<!doctype html><title>App</title>');
   mkdirSync(path.join(staticDir, 'assets'));
   writeFileSync(path.join(staticDir, 'assets', 'a.js'), 'console.log(1)');
+  process.env.MOCK_TRAFFIC_MS = '200'; // apps publish on MQTT often, for the live test
   mock = createMock();
   mockUrl = `http://127.0.0.1:${await listen(mock)}`;
   app = await start(envFor());
@@ -260,6 +261,44 @@ test('health of the apps on a local edge client', async () => {
   await fetch(`${s.url}/app-api/edge/1002?config=true`, { method: 'DELETE', headers: { 'X-API-Key': KEY } });
   for (const i of [ok, bad]) await fetch(`${mockUrl}/api/v2/edge/app/configured/1002/${i.id}`, { method: 'DELETE', headers: { 'X-API-Key': KEY } });
   s.server.close();
+});
+
+test('MQTT: topics, history and live messages of the apps', async () => {
+  const g = (p, key = KEY) => fetch(base + p, { headers: key ? { 'X-API-Key': key } : {} });
+  const t = await (await g('/app-api/mqtt/1001/topics?hours=24')).json();
+  const log = t.topics.find((x) => x.topic === 'obj/doorcounter/9001/log');
+  assert.ok(log && log.kind === 'obj' && log.count > 0);
+  assert.ok(t.topics.some((x) => x.topic === 'evt/doorcounter/9001/alarm' && x.kind === 'evt'));
+  assert.ok(t.topics.every((x) => !x.topic.startsWith('5001/')), 'no client_id in topics');
+  assert.ok(!t.topics.some((x) => x.topic.includes('weather')), 'only this installation');
+
+  // wildcards are matched by the backend, exact topics by IoT Open
+  const wild = await (await g('/app-api/mqtt/1001/history?topics=evt/doorcounter/%23&hours=24')).json();
+  assert.ok(wild.messages.length > 0 && wild.messages.every((m) => m.kind === 'evt' && m.history));
+  assert.match(wild.messages[0].msg, /held open/);
+  const exact = await (await g('/app-api/mqtt/1001/history?topics=obj/doorcounter/9001/log&hours=1')).json();
+  assert.ok(exact.messages.length > 0 && exact.messages.every((m) => m.topic === 'obj/doorcounter/9001/log'));
+  assert.ok(exact.messages.every((m, i) => i === 0 || m.time >= exact.messages[i - 1].time), 'oldest first');
+
+  assert.equal((await g('/app-api/mqtt/1001/history?topics=box/%23')).status, 400);
+  assert.equal((await g('/app-api/mqtt/1001/history')).status, 400);
+  assert.equal((await g('/app-api/mqtt/1001/topics', null)).status, 401);
+  assert.equal((await g('/app-api/mqtt/4242/topics')).status, 404);
+
+  // live: server-sent events until the client goes away
+  const ac = new AbortController();
+  const res = await fetch(base + '/app-api/mqtt/1001/live?topics=obj/doorcounter/%2B/log', { headers: { 'X-API-Key': KEY }, signal: ac.signal });
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get('content-type'), /text\/event-stream/);
+  const reader = res.body.getReader();
+  let text = '';
+  const until = Date.now() + 5000;
+  while (!/event: message/.test(text) && Date.now() < until) text += new TextDecoder().decode((await reader.read()).value);
+  ac.abort();
+  assert.match(text, /event: state\ndata: \{"state":"live"\}/);
+  const msg = JSON.parse(/event: message\ndata: (.*)\n/.exec(text)[1]);
+  assert.equal(msg.topic, 'obj/doorcounter/9001/log');
+  assert.match(msg.msg, /Door opened/);
 });
 
 test('EDGE_CLIENT_NETWORK is created on first use', async () => {

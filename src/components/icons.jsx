@@ -21,6 +21,7 @@ const P = {
   back: 'M15 18l-6-6 6-6',
   logout: 'M9 21H5V3h4M16 17l5-5-5-5M21 12H9',
   search: 'M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM21 21l-4.3-4.3',
+  activity: 'M22 12h-4l-3 9L9 3l-3 9H2',
 };
 
 export function Icon({ name, size = 20, className = '', title }) {

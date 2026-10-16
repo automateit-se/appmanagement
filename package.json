@@ -1,6 +1,6 @@
 {
   "name": "appmanagement",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "private": true,
   "type": "module",
   "description": "Manage IoT Open Edge Apps: install apps from GitHub on installations, configure and update them, and run an IoT Open Docker Edge Client.",

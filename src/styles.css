@@ -331,3 +331,36 @@ select.compact { width: auto; padding: 4px 8px; font-size: 13px; }
 .value-input { width: 110px; flex: none; padding: 5px 8px; }
 .check-list li.row { padding-right: 8px; }
 .repeat > .btn { justify-self: start; padding: 5px 12px; font-size: 14px; }
+
+/* MQTT: topics and messages of the installation's apps */
+.lead-text { margin: 0 0 12px; }
+.panel input[type='search'], .panel select, .mqtt-log-bar select { width: auto; }
+.topic-list { display: flex; flex-direction: column; max-height: 360px; overflow: auto; margin-top: 10px; border: 1px solid var(--border); border-radius: 8px; }
+.topic-row { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--border); cursor: pointer; min-width: 0; }
+.topic-row:last-child { border-bottom: 0; }
+.topic-row.on { background: var(--surface-2); }
+.topic-row input { width: auto; flex: none; }
+.topic-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; overflow-wrap: anywhere; }
+.topic-last { margin-left: auto; text-align: right; overflow-wrap: anywhere; max-width: 45%; }
+.kind { flex: none; font-size: 11px; font-weight: 700; text-transform: uppercase; padding: 1px 6px; border-radius: 4px; background: var(--surface-2); color: var(--muted); }
+.kind.evt { color: var(--status-warn-text); background: var(--warn-bg); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+.chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 4px 3px 10px; border-radius: 99px; background: var(--surface-2); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; overflow-wrap: anywhere; }
+.chip button { border: 0; background: none; color: inherit; cursor: pointer; padding: 2px; display: inline-flex; }
+.mqtt-log { display: flex; flex-direction: column; gap: 8px; }
+.mqtt-log-bar .mqtt-filter { min-width: 120px; width: auto; }
+.log.mqtt-lines { height: 380px; }
+.mqtt-log.compact .log.mqtt-lines { height: auto; max-height: 260px; font-size: 12.5px; }
+.mqtt-line { flex-direction: column; gap: 0; }
+.mqtt-line-btn { all: unset; display: flex; gap: 10px; cursor: pointer; flex-wrap: wrap; }
+.mqtt-line-btn:focus-visible { outline: 2px solid var(--accent); }
+.mqtt-line .kind { background: rgba(255, 255, 255, 0.1); color: #b8d4df; align-self: center; }
+.mqtt-line .kind.evt { background: rgba(246, 165, 62, 0.2); color: #f6c27a; }
+.mqtt-topic { color: #8fd3dc; }
+.mqtt-line.fresh .mqtt-text { color: #ffffff; }
+.mqtt-raw { margin: 4px 0 6px; padding: 6px 8px; background: rgba(255, 255, 255, 0.06); border-radius: 6px; white-space: pre-wrap; font-size: 12px; }
+.mqtt-log.compact .mqtt-line-btn { gap: 0 8px; }
+.mqtt-log.compact .mqtt-text { flex-basis: 100%; }
+.mqtt-log.compact .mqtt-line + .mqtt-line { margin-top: 4px; }
+.app-mqtt { display: flex; flex-direction: column; gap: 6px; }
+.app-mqtt-pick { align-self: flex-start; display: inline-flex; align-items: center; gap: 4px; }

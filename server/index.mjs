@@ -10,6 +10,7 @@ import { dockerClient } from './docker.mjs';
 import { edgeClients } from './edgeClient.mjs';
 import { presenceChecker } from './presence.mjs';
 import { accessChecker, requireAccess } from './access.mjs';
+import { mqttLog, parsePatterns } from './mqttLog.mjs';
 
 // App Management backend: serves the built app, relays /api/v2 to IoT Open (API_MODE=proxy), reads edge apps
 // from GitHub and manages IoT Open Docker Edge Clients in the local Docker environment (DOCKER_HOST).
@@ -32,6 +33,7 @@ export function createApp(cfg, opts = {}) {
   const edge = cfg.edge.docker ? edgeClients(cfg, dockerClient(cfg.edge.docker), lynx) : null;
   const presence = presenceChecker(cfg, lynx, opts.presence);
   const access = accessChecker(cfg, lynx);
+  const mqtt = mqttLog(cfg, lynx);
 
   const authLimit = rateLimiter(10, 60_000);
   const catalogLimit = rateLimiter(120, 60_000);
@@ -83,6 +85,18 @@ export function createApp(cfg, opts = {}) {
       const a = await access(requestToken(req), Number(m[1]));
       const { me, inst, ...out } = a;
       return sendJson(res, 200, { ...out, edgeClients: !!edge });
+    }
+
+    // What apps publish on MQTT (obj/evt): topics seen lately, history and live, read with the user's own token
+    if ((m = /^\/app-api\/mqtt\/(\d{1,12})\/(topics|history|live)$/.exec(p))) {
+      if (req.method !== 'GET') throw new HttpError(405, 'Metoden stöds inte');
+      if (!edgeLimit(ip)) throw new HttpError(429, 'För många anrop, vänta en stund');
+      const token = requestToken(req);
+      const inst = await lynx.installation(token, Number(m[1]));
+      if (m[2] === 'topics') return sendJson(res, 200, await mqtt.topics(token, inst, { hours: url.searchParams.get('hours') }));
+      const patterns = parsePatterns(url.searchParams.get('topics'));
+      if (m[2] === 'history') return sendJson(res, 200, await mqtt.history(token, inst, patterns, { hours: url.searchParams.get('hours') }));
+      return mqtt.live(req, res, token, inst, patterns);
     }
 
     // Edge status in IoT Open (is there an edge client, is it online?) - read only, any user with access
