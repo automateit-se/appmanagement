@@ -101,6 +101,8 @@ export function loadConfig(env = process.env) {
       image: edgeImage,
       network: edgeNetwork,
       // e-mail, user id or a whole e-mail domain ("@example.com" or "*@example.com")
+      // an extra IoT Open role permission needed to manage edge clients on this server (none when empty)
+      permission: (env.EDGE_PERMISSION || '').trim(),
       admins: list(env.EDGE_ADMINS).map((s) => s.toLowerCase().replace(/^\*@/, '@')),
     },
   };

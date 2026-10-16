@@ -73,6 +73,7 @@ Releases and how to publish one: [docs/releases](docs/releases/README.md).
 | `DOCKER_HOST`             | *(empty = edge clients off)*          | `tcp://docker-proxy:2375` (recommended) or `unix:///var/run/docker.sock` |
 | `EDGE_CLIENT_IMAGE`       | `ghcr.io/iotopen/edge-client:latest`  | Image for new edge clients and updates |
 | `EDGE_CLIENT_NETWORK`     | *(empty = Docker's default)*          | Docker network for edge client containers, created on first use (bridge, outbound only). `deploy/compose.yml` uses `iotopen-edge` |
+| `EDGE_PERMISSION`         | *(empty)*                             | Optional extra restriction on this server: only users whose IoT Open role has this permission may set up and manage edge clients. Give the permission to a dedicated role in IoT Open. Matched as is, as `/all` or `/assigned`, or through a wildcard in the role (`external/example/*`) |
 | `EDGE_ADMINS`             | *(empty)*                             | Optional extra restriction on this server: only these IoT Open users may set up and manage edge clients, on top of their IoT Open role. Comma-separated e-mail addresses, user ids or e-mail domains (`@example.com`) |
 | `REAL_IP_HEADER`          | *(empty)*                             | Header with the client address set by a trusted reverse proxy, e.g. `cf-connecting-ip`, for the sign-in rate limit |
 

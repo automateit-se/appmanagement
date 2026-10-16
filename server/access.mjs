@@ -13,6 +13,7 @@ import { HttpError, ttlCache } from './http.mjs';
 //
 // IoT Open checks the same permissions on its own API; App Management uses them for what only it does (the
 // Docker side of edge clients) and to show only what the user can actually do.
+// EDGE_PERMISSION, when set, is a role permission that is also needed to manage edge clients on this server.
 // EDGE_ADMINS, when set, is an extra restriction on top: only those users may manage edge clients. An entry is a user id,
 // an e-mail address or an e-mail domain ("@example.com"), matched against the e-mail IoT Open reports for the user
 // (/user/me, also when signed in with an API key: the key belongs to a user).
@@ -24,6 +25,16 @@ export function edgeAdmin(admins, me) {
   const at = email.lastIndexOf('@');
   const domain = at > 0 ? email.slice(at) : null;
   return admins.some((a) => a === String(me?.id) || (email && a === email) || (domain && a === domain));
+}
+
+/**
+ * Whether a role grants the permission `name`: as is (e.g. external/... permissions), as `<name>/all`, as
+ * `<name>/assigned` on an assigned installation, or through a wildcard such as `external/example/*`.
+ */
+export function hasPermission(perms, name, assigned) {
+  if (!name || !perms) return false;
+  if (perms[name] === true || perms[`${name}/all`] === true || (assigned && perms[`${name}/assigned`] === true)) return true;
+  return Object.entries(perms).some(([k, v]) => v === true && k.endsWith('/*') && name.startsWith(k.slice(0, -1)));
 }
 
 const key = (token) => createHash('sha256').update(token).digest('hex');
@@ -54,7 +65,8 @@ export function accessChecker(cfg, lynx) {
 
     const listed = edgeAdmin(cfg.edge.admins, me);
     const known = role !== null;
-    const manageEdge = known && can('gateway/reset/password') && listed;
+    const permitted = !cfg.edge.permission || (known && hasPermission(perms, cfg.edge.permission, assigned));
+    const manageEdge = known && can('gateway/reset/password') && listed && permitted;
     return {
       me,
       inst,
@@ -67,7 +79,8 @@ export function accessChecker(cfg, lynx) {
       installApps: !known || can('edge/app/configured/create_delete'),
       updateApps: !known || can('edge/app/configured/update'),
       publishApps: !known || perms['edge/app/create'] === true,
-      restrictedBy: !listed ? 'EDGE_ADMINS' : null,
+      // a restriction of this server, on top of the IoT Open role (the permission's name is not sent to the browser)
+      restrictedBy: !listed ? 'EDGE_ADMINS' : !permitted ? 'EDGE_PERMISSION' : null,
     };
   };
 }
@@ -77,8 +90,10 @@ export function requireAccess(a, allowed, what) {
   if (allowed) return;
   const why = a.restrictedBy === 'EDGE_ADMINS'
     ? 'På den här servern får bara utvalda användare sätta upp och hantera edge clients (EDGE_ADMINS).'
-    : !a.known
-      ? 'Dina behörigheter i IoT Open gick inte att läsa.'
-      : `Din roll i IoT Open (${a.role || 'okänd'}) ger inte den behörigheten för installationen.`;
+    : a.restrictedBy === 'EDGE_PERMISSION'
+      ? 'På den här servern krävs en roll i IoT Open med en särskild rättighet för att sätta upp och hantera edge clients.'
+      : !a.known
+        ? 'Dina behörigheter i IoT Open gick inte att läsa.'
+        : `Din roll i IoT Open (${a.role || 'okänd'}) ger inte den behörigheten för installationen.`;
   throw new HttpError(403, `Du får inte ${what}. ${why}`);
 }

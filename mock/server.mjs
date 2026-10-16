@@ -40,6 +40,9 @@ function rolePermissions(id) {
     p[`${n}/assigned`] = !!r.all || r.assigned.includes(n);
   }
   p['edge/app/create'] = !!r.all || r.plain.includes('edge/app/create');
+  // external permissions have no /all or /assigned and can be wildcards
+  if (r.all) p['external/example/*'] = true;
+  if (r.name === 'owner') p['external/example/edge/manager'] = true;
   return { id: Number(id), name: r.name, priority: 50, permissions: p };
 }
 const pending2fa = new Map();

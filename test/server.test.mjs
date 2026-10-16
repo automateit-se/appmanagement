@@ -264,6 +264,41 @@ test('EDGE_ADMINS restricts edge client management', async () => {
   s2.server.close();
 });
 
+test('EDGE_PERMISSION requires an extra IoT Open role permission', async () => {
+  const acc = async (s, key, iid = 1001) => (await fetch(`${s.url}/app-api/access/${iid}`, { headers: { 'X-API-Key': key } })).json();
+  // admin has external/example/*, owner has external/example/edge/manager, read_only has neither
+  const s = await start(envFor({ EDGE_PERMISSION: 'external/example/edge/manager' }));
+  assert.equal((await acc(s, KEY)).manageEdge, true);
+  assert.equal((await acc(s, 'owner-api-key')).manageEdge, true);
+  const view = await acc(s, 'viewer-api-key');
+  assert.deepEqual([view.manageEdge, view.viewEdge, view.restrictedBy], [false, true, 'EDGE_PERMISSION']);
+  assert.ok(!JSON.stringify(view).includes('external/'), 'the permission name is not sent to the browser');
+  s.server.close();
+
+  const s2 = await start(envFor({ EDGE_PERMISSION: 'external/other/manager' }));
+  const a = await acc(s2, KEY);
+  assert.deepEqual([a.manageEdge, a.viewEdge, a.restrictedBy], [false, true, 'EDGE_PERMISSION']);
+  const r = await fetch(s2.url + '/app-api/edge/1001', { method: 'POST', headers: { 'X-API-Key': KEY }, body: JSON.stringify({ confirm: true }) });
+  assert.equal(r.status, 403);
+  assert.match((await r.json()).message, /särskild rättighet/);
+  assert.equal((await fetch(s2.url + '/app-api/edge/1001', { headers: { 'X-API-Key': KEY } })).status, 200);
+  s2.server.close();
+});
+
+test('role permissions: plain, /all, /assigned and wildcards', async () => {
+  const { hasPermission } = await import('../server/access.mjs');
+  const perms = { 'a/b': true, 'c/all': true, 'd/assigned': true, 'external/x/*': true, 'external/y/*': false, 'e': false };
+  assert.equal(hasPermission(perms, 'a/b', false), true);
+  assert.equal(hasPermission(perms, 'c', false), true);
+  assert.equal(hasPermission(perms, 'd', false), false);
+  assert.equal(hasPermission(perms, 'd', true), true);
+  assert.equal(hasPermission(perms, 'external/x/estate/manager', false), true);
+  assert.equal(hasPermission(perms, 'external/xy/manager', false), false);
+  assert.equal(hasPermission(perms, 'external/y/manager', false), false);
+  assert.equal(hasPermission(perms, 'e', true), false);
+  assert.equal(hasPermission(perms, '', true), false);
+});
+
 test('EDGE_ADMINS accepts an e-mail domain', async () => {
   const acc = async (s) => (await fetch(s.url + '/app-api/access/1001', { headers: { 'X-API-Key': KEY } })).json();
   for (const [admins, allowed] of [['@example.com', true], ['*@Example.com', true], ['@other.example', false], ['@ample.com', false], ['example.com', false]]) {
