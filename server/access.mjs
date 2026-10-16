@@ -5,7 +5,8 @@ import { HttpError, ttlCache } from './http.mjs';
 // (GET /api/v2/role/{id}) and whether the installation is assigned to the user (assigned_installations).
 // Permissions come as "<name>/all" (every installation the user can see) and "<name>/assigned" (only assigned ones).
 //
-//   manageEdge   gateway/reset/password            set up, renew, update, stop, start, remove the edge client
+//   manageEdge   gateway/reset/password            renew, update, stop, start, remove the edge client
+//   createEdge   manageEdge + this server's rules   set up a new edge client (a new container on this server)
 //   viewEdge     edge/app/configured/list           see the edge client's status and log (or manageEdge)
 //   installApps  edge/app/configured/create_delete  install and remove apps
 //   updateApps   edge/app/configured/update         change settings, update to a new version
@@ -13,8 +14,9 @@ import { HttpError, ttlCache } from './http.mjs';
 //
 // IoT Open checks the same permissions on its own API; App Management uses them for what only it does (the
 // Docker side of edge clients) and to show only what the user can actually do.
-// EDGE_PERMISSION, when set, is a role permission that is also needed to manage edge clients on this server.
-// EDGE_ADMINS, when set, is an extra restriction on top: only those users may manage edge clients. An entry is a user id,
+// Setting up a new edge client starts a new container on this server, so the server can restrict it further:
+// EDGE_PERMISSION, when set, is a role permission that is also needed, and EDGE_ADMINS, when set, names the only
+// users who may do it. An entry is a user id,
 // an e-mail address or an e-mail domain ("@example.com"), matched against the e-mail IoT Open reports for the user
 // (/user/me, also when signed in with an API key: the key belongs to a user).
 
@@ -66,7 +68,7 @@ export function accessChecker(cfg, lynx) {
     const listed = edgeAdmin(cfg.edge.admins, me);
     const known = role !== null;
     const permitted = !cfg.edge.permission || (known && hasPermission(perms, cfg.edge.permission, assigned));
-    const manageEdge = known && can('gateway/reset/password') && listed && permitted;
+    const manageEdge = known && can('gateway/reset/password');
     return {
       me,
       inst,
@@ -74,12 +76,14 @@ export function accessChecker(cfg, lynx) {
       role: role?.name || null,
       assigned,
       manageEdge,
+      createEdge: manageEdge && listed && permitted,
       viewEdge: manageEdge || (known && can('edge/app/configured/list')),
       // unknown permissions: let IoT Open decide when the user tries
       installApps: !known || can('edge/app/configured/create_delete'),
       updateApps: !known || can('edge/app/configured/update'),
       publishApps: !known || perms['edge/app/create'] === true,
-      // a restriction of this server, on top of the IoT Open role (the permission's name is not sent to the browser)
+      // why this server does not let the user set up a new edge client although the role would (the permission's
+      // name is not sent to the browser)
       restrictedBy: !listed ? 'EDGE_ADMINS' : !permitted ? 'EDGE_PERMISSION' : null,
     };
   };
@@ -89,9 +93,9 @@ export function accessChecker(cfg, lynx) {
 export function requireAccess(a, allowed, what) {
   if (allowed) return;
   const why = a.restrictedBy === 'EDGE_ADMINS'
-    ? 'På den här servern får bara utvalda användare sätta upp och hantera edge clients (EDGE_ADMINS).'
+    ? 'På den här servern får bara utvalda användare sätta upp nya edge clients (EDGE_ADMINS).'
     : a.restrictedBy === 'EDGE_PERMISSION'
-      ? 'På den här servern krävs en roll i IoT Open med en särskild rättighet för att sätta upp och hantera edge clients.'
+      ? 'På den här servern krävs en roll i IoT Open med en särskild rättighet för att sätta upp nya edge clients.'
       : !a.known
         ? 'Dina behörigheter i IoT Open gick inte att läsa.'
         : `Din roll i IoT Open (${a.role || 'okänd'}) ger inte den behörigheten för installationen.`;

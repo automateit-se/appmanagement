@@ -104,6 +104,8 @@ export function createApp(cfg, opts = {}) {
       const { me: user, inst } = a;
       if (req.method === 'GET') requireAccess(a, a.viewEdge, 'se installationens edge client');
       else requireAccess(a, a.manageEdge, 'hantera installationens edge client');
+      // a new edge client is a new container on this server: the server's own rules apply on top of the role
+      if (req.method === 'POST' && sub === '') requireAccess(a, a.createEdge, 'sätta upp en ny edge client på den här servern');
       if (req.method === 'GET' && sub === '') return sendJson(res, 200, await edge.status(iid));
       if (req.method === 'GET' && sub === 'logs') return sendJson(res, 200, await edge.logs(iid, url.searchParams.get('tail')));
       if (req.method === 'DELETE' && sub === '') {

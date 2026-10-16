@@ -24,10 +24,10 @@ services:
       DOCKER_HOST: tcp://docker-proxy:2375
       EDGE_CLIENT_NETWORK: iotopen-edge
       EDGE_CLIENT_IMAGE: ${EDGE_CLIENT_IMAGE:-ghcr.io/iotopen/edge-client:latest}
-      # who may do what is decided by the user's role in IoT Open; EDGE_ADMINS can only restrict edge clients further (e.g. @example.com)
-      EDGE_ADMINS: ${EDGE_ADMINS:-}
-      # an extra IoT Open role permission needed to manage edge clients on this server
+      # who may do what is decided by the user's role in IoT Open; setting up a new edge client on this server
+      # can also require a role permission (EDGE_PERMISSION) and be limited to some users (EDGE_ADMINS, e.g. @example.com)
       EDGE_PERMISSION: ${EDGE_PERMISSION:-}
+      EDGE_ADMINS: ${EDGE_ADMINS:-}
       # edge apps on GitHub: topic-tagged ones from these owners, plus IoT Open's own apps
       GITHUB_OWNERS: ${GITHUB_OWNERS:-automateit-se}
       GITHUB_INCLUDE: ${GITHUB_INCLUDE:-IoTOpen/edge-app-*}

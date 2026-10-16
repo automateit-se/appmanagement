@@ -39,7 +39,7 @@ function EdgeHint({ iid, access }) {
     backend.edgeStatus(iid).then(setSt, () => setSt(null));
   }, [iid, local]);
   if (!onDefaultServer() || !p) return null;
-  const edgeLink = local && (st?.exists || access?.manageEdge) && (
+  const edgeLink = local && (st?.exists || access?.createEdge) && (
     <a className="btn" href={`#/i/${iid}/edge`}>
       {st?.exists ? 'Visa edge client' : 'Sätt upp edge client'}
     </a>
@@ -66,7 +66,7 @@ function EdgeHint({ iid, access }) {
       </div>
     );
   }
-  if (!local || st?.exists || !access?.manageEdge) return null;
+  if (!local || st?.exists || !access?.createEdge) return null;
   return (
     <div className="info-box row gap wrap">
       <Icon name="box" />

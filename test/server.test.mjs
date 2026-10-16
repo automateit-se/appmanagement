@@ -252,36 +252,43 @@ test('IoT Open roles decide what a user may do', async () => {
   assert.equal((await fetch(`${base}/app-api/edge/1002`, { headers: { 'X-API-Key': 'owner-api-key' } })).status, 403);
 });
 
-test('EDGE_ADMINS restricts edge client management', async () => {
+test('EDGE_ADMINS restricts setting up new edge clients', async () => {
+  const post = (s, sub, body) => fetch(`${s.url}/app-api/edge/1001${sub}`, { method: 'POST', headers: { 'X-API-Key': KEY }, body: JSON.stringify(body) });
   const s = await start(envFor({ EDGE_ADMINS: 'admin@example.com' }));
-  // looking is still allowed, managing is not
+  // looking, starting and stopping follow the IoT Open role; only a new edge client is refused
   assert.equal((await fetch(s.url + '/app-api/edge/1001', { headers: { 'X-API-Key': KEY } })).status, 200);
-  const r = await fetch(s.url + '/app-api/edge/1001/start', { method: 'POST', headers: { 'X-API-Key': KEY }, body: '{}' });
+  assert.notEqual((await post(s, '/start', {})).status, 403);
+  const r = await post(s, '', { confirm: true });
   assert.equal(r.status, 403);
+  assert.match((await r.json()).message, /utvalda användare/);
   s.server.close();
   const s2 = await start(envFor({ EDGE_ADMINS: 'Demo@Example.com' }));
-  assert.equal((await fetch(s2.url + '/app-api/edge/1001', { headers: { 'X-API-Key': KEY } })).status, 200);
+  const a = await (await fetch(s2.url + '/app-api/access/1001', { headers: { 'X-API-Key': KEY } })).json();
+  assert.deepEqual([a.manageEdge, a.createEdge, a.restrictedBy], [true, true, null]);
   s2.server.close();
 });
 
-test('EDGE_PERMISSION requires an extra IoT Open role permission', async () => {
+test('EDGE_PERMISSION requires an extra IoT Open role permission to set up edge clients', async () => {
   const acc = async (s, key, iid = 1001) => (await fetch(`${s.url}/app-api/access/${iid}`, { headers: { 'X-API-Key': key } })).json();
+  const post = (s, sub, body) => fetch(`${s.url}/app-api/edge/1001${sub}`, { method: 'POST', headers: { 'X-API-Key': KEY }, body: JSON.stringify(body) });
   // admin has external/example/*, owner has external/example/edge/manager, read_only has neither
   const s = await start(envFor({ EDGE_PERMISSION: 'external/example/edge/manager' }));
-  assert.equal((await acc(s, KEY)).manageEdge, true);
-  assert.equal((await acc(s, 'owner-api-key')).manageEdge, true);
+  assert.equal((await acc(s, KEY)).createEdge, true);
+  assert.equal((await acc(s, 'owner-api-key')).createEdge, true);
   const view = await acc(s, 'viewer-api-key');
-  assert.deepEqual([view.manageEdge, view.viewEdge, view.restrictedBy], [false, true, 'EDGE_PERMISSION']);
+  assert.deepEqual([view.manageEdge, view.createEdge, view.viewEdge], [false, false, true]);
   assert.ok(!JSON.stringify(view).includes('external/'), 'the permission name is not sent to the browser');
   s.server.close();
 
   const s2 = await start(envFor({ EDGE_PERMISSION: 'external/other/manager' }));
   const a = await acc(s2, KEY);
-  assert.deepEqual([a.manageEdge, a.viewEdge, a.restrictedBy], [false, true, 'EDGE_PERMISSION']);
-  const r = await fetch(s2.url + '/app-api/edge/1001', { method: 'POST', headers: { 'X-API-Key': KEY }, body: JSON.stringify({ confirm: true }) });
+  assert.deepEqual([a.manageEdge, a.createEdge, a.viewEdge, a.restrictedBy], [true, false, true, 'EDGE_PERMISSION']);
+  assert.ok(!JSON.stringify(a).includes('external/'), 'the permission name is not sent to the browser');
+  const r = await post(s2, '', { confirm: true });
   assert.equal(r.status, 403);
   assert.match((await r.json()).message, /särskild rättighet/);
   assert.equal((await fetch(s2.url + '/app-api/edge/1001', { headers: { 'X-API-Key': KEY } })).status, 200);
+  for (const sub of ['/start', '/stop', '/restart']) assert.notEqual((await post(s2, sub, {})).status, 403, sub);
   s2.server.close();
 });
 
@@ -304,7 +311,8 @@ test('EDGE_ADMINS accepts an e-mail domain', async () => {
   for (const [admins, allowed] of [['@example.com', true], ['*@Example.com', true], ['@other.example', false], ['@ample.com', false], ['example.com', false]]) {
     const s = await start(envFor({ EDGE_ADMINS: admins }));
     const a = await acc(s);
-    assert.equal(a.manageEdge, allowed, admins);
+    assert.equal(a.createEdge, allowed, admins);
+    assert.equal(a.manageEdge, true, admins);
     assert.equal(a.restrictedBy, allowed ? null : 'EDGE_ADMINS', admins);
     assert.equal(a.viewEdge, true, admins);
     s.server.close();

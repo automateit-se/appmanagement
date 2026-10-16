@@ -269,14 +269,14 @@ export default function EdgeClient({ installation, access }) {
       <>
         {error && <div className="error-box">{error}</div>}
         {jobFailed}
-        {readOnly ? (
+        {!access?.createEdge ? (
           <div className="info-box">
             Det finns ingen edge client för installationen här.{' '}
-            {access?.restrictedBy === 'EDGE_ADMINS'
-              ? 'På den här servern får bara utvalda användare sätta upp edge clients. Kontakta den som driftar App Management.'
+            {!access?.manageEdge
+              ? `Din roll i IoT Open (${access?.role || 'okänd'}) får inte sätta upp en; det kräver rätten att byta installationens gateway-credentials.`
               : access?.restrictedBy === 'EDGE_PERMISSION'
-                ? 'På den här servern krävs en roll i IoT Open med en särskild rättighet för att sätta upp edge clients. Kontakta den som administrerar rollerna i IoT Open.'
-                : `Din roll i IoT Open (${access?.role || 'okänd'}) får inte sätta upp en; det kräver rätten att byta installationens gateway-credentials.`}
+                ? 'På den här servern krävs en roll i IoT Open med en särskild rättighet för att sätta upp nya edge clients. Kontakta den som administrerar rollerna i IoT Open.'
+                : 'På den här servern får bara utvalda användare sätta upp nya edge clients. Kontakta den som driftar App Management.'}
           </div>
         ) : (
           <Setup iid={iid} onCreated={(s) => (setJobError(null), accept(s))} />
@@ -356,13 +356,7 @@ export default function EdgeClient({ installation, access }) {
             )}
           </dl>
           {readOnly ? (
-            <p className="muted small">
-              {access?.restrictedBy === 'EDGE_ADMINS'
-                ? 'Du kan se edge clienten. På den här servern får bara utvalda användare ändra den.'
-                : access?.restrictedBy === 'EDGE_PERMISSION'
-                  ? 'Du kan se edge clienten. Att ändra den kräver en roll i IoT Open med en särskild rättighet.'
-                  : `Din roll i IoT Open (${access?.role || 'okänd'}) kan se edge clienten men inte ändra den.`}
-            </p>
+            <p className="muted small">Din roll i IoT Open ({access?.role || 'okänd'}) kan se edge clienten men inte ändra den.</p>
           ) : (
           <div className="row gap wrap">
             {st.running ? (
