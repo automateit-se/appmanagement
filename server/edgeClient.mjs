@@ -1,5 +1,6 @@
 import { HttpError } from './http.mjs';
 import { makeTar } from './tar.mjs';
+import { appHealth, appLogLines, appProcesses } from './appHealth.mjs';
 
 // IoT Open Docker Edge Client (ghcr.io/iotopen/edge-client), one container per installation, run in the same
 // Docker environment as App Management. The backend only ever touches containers and volumes it created itself
@@ -13,6 +14,8 @@ import { makeTar } from './tar.mjs';
 const L = 'se.automateit.appmanagement';
 const ERROR_LINE = /\b(error|fatal|fail(ed|ure)?|panic|denied|refused|unauthori[sz]ed|not authori[sz]ed|connection lost|exception)\b/i;
 const MAX_LOG_LINES = 1000;
+// enough log to cover about an hour of a crashing app (edged restarts it every 10 s)
+const APP_LOG_LINES = 3000;
 
 export const containerName = (iid) => `iotopen-edge-${Number(iid)}`;
 export const volumeName = (iid) => `iotopen-edge-${Number(iid)}-config`;
@@ -165,6 +168,34 @@ export function edgeClients(cfg, docker, lynx) {
     enabled: true,
     image: cfg.edge.image,
     status,
+    /** Health of the apps the edge client runs: processes (memory, uptime) and what the log says. */
+    async apps(iid) {
+      const c = await find(iid);
+      if (!c) return { exists: false, apps: {}, byLogic: {} };
+      const running = c.State === 'running';
+      const [top, stats, lines] = await Promise.all([
+        running ? docker.top(c.Id, '-o pid,rss,etimes,args').catch(() => null) : null,
+        running ? docker.stats(c.Id).catch(() => null) : null,
+        docker.logs(c.Id, APP_LOG_LINES).catch(() => []),
+      ]);
+      const mem = stats?.memory_stats;
+      // like `docker stats`: page cache that can be dropped is not counted
+      const cache = mem?.stats?.inactive_file ?? mem?.stats?.total_inactive_file ?? 0;
+      return {
+        exists: true,
+        running,
+        processesRead: !!top,
+        memory: mem?.usage ? { usage: Math.max(0, mem.usage - cache), limit: mem.limit || null } : null,
+        ...appHealth({ processes: appProcesses(top), lines, edgeRunning: running }),
+      };
+    },
+
+    /** One app instance's log lines; `logic` ("<app id>-<version>") adds errors from its code file. */
+    async appLogs(iid, instance, logic) {
+      const c = await must(iid);
+      return appLogLines(await docker.logs(c.Id, APP_LOG_LINES), instance, logic).slice(-MAX_LOG_LINES);
+    },
+
     async logs(iid, tail = 200) {
       const c = await must(iid);
       const n = Math.max(10, Math.min(MAX_LOG_LINES, Number(tail) || 200));

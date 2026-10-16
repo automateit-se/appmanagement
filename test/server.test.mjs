@@ -220,6 +220,48 @@ test('edge client lifecycle', async () => {
   assert.equal((await post('/app-api/edge/1002/start')).status, 404);
 });
 
+test('health of the apps on a local edge client', async () => {
+  const s = await start(envFor());
+  const g = (p) => fetch(s.url + p, { headers: { 'X-API-Key': KEY } });
+  assert.deepEqual((await (await g('/app-api/edge/1002/apps')).json()).exists, false);
+  // two apps on "Kontoret", one of them crashes in the mock
+  const add = async (name) => (await fetch(`${mockUrl}/api/v2/edge/app/configured/1002`, {
+    method: 'POST', headers: { 'X-API-Key': KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ app_id: 1, version: '1.0.0', name, config: {} }),
+  })).json();
+  const ok = await add('Weather');
+  const bad = await add('Door alarm');
+  const c = await fetch(`${s.url}/app-api/edge/1002`, { method: 'POST', headers: { 'X-API-Key': KEY }, body: JSON.stringify({ confirm: true, replaceOnline: true }) });
+  assert.equal(c.status, 202);
+  await waitJob('/app-api/edge/1002', KEY, s.url);
+
+  const h = await (await g('/app-api/edge/1002/apps')).json();
+  assert.equal(h.exists, true);
+  assert.equal(h.processesRead, true);
+  assert.ok(h.memory.usage > 0 && h.memory.limit === 256 * 1048576);
+  assert.equal(h.apps[ok.id].state, 'running');
+  assert.ok(h.apps[ok.id].memoryKb > 0);
+  assert.equal(h.apps[bad.id].state, 'crashing');
+  assert.match(h.apps[bad.id].lastError.text, /attempt to index a nil value/);
+
+  const logs = await (await g(`/app-api/edge/1002/apps/${bad.id}/logs?logic=1-1.0.0`)).json();
+  assert.ok(logs.length >= 3 && logs.every((l) => !l.text.includes(`edge app ${ok.id}`)));
+  assert.ok(logs.some((l) => l.error && /died with 1/.test(l.text)));
+  assert.equal((await g(`/app-api/edge/1002/apps/${bad.id}/logs?logic=../../etc`)).status, 400);
+  // read_only may look at the health too
+  assert.equal((await fetch(s.url + '/app-api/edge/1002/apps', { headers: { 'X-API-Key': 'viewer-api-key' } })).status, 200);
+
+  await fetch(`${s.url}/app-api/edge/1002/stop`, { method: 'POST', headers: { 'X-API-Key': KEY } });
+  const off = await (await g('/app-api/edge/1002/apps')).json();
+  assert.equal(off.running, false);
+  assert.equal(off.memory, null);
+  assert.equal(off.apps[ok.id].state, 'edge-stopped');
+
+  await fetch(`${s.url}/app-api/edge/1002?config=true`, { method: 'DELETE', headers: { 'X-API-Key': KEY } });
+  for (const i of [ok, bad]) await fetch(`${mockUrl}/api/v2/edge/app/configured/1002/${i.id}`, { method: 'DELETE', headers: { 'X-API-Key': KEY } });
+  s.server.close();
+});
+
 test('EDGE_CLIENT_NETWORK is created on first use', async () => {
   const s = await start(envFor({ EDGE_CLIENT_NETWORK: 'iotopen-edge' }));
   const r = await fetch(s.url + '/app-api/edge/1002', { method: 'POST', headers: { 'X-API-Key': KEY }, body: JSON.stringify({ confirm: true, replaceOnline: true }) });

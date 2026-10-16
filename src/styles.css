@@ -238,6 +238,16 @@ select.compact { width: auto; padding: 4px 8px; font-size: 13px; }
 .card-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: auto; padding-top: 4px; }
 .card-actions .btn { padding: 6px 11px; font-size: 14px; }
 .badges { display: flex; flex-wrap: wrap; gap: 4px; }
+.btn.small { padding: 4px 10px; font-size: 13px; }
+.app-health { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border-radius: 8px; background: var(--surface-2); }
+.app-health .state { padding: 2px 9px; font-size: 12.5px; }
+.app-health-error { margin: 0; display: flex; gap: 4px; align-items: baseline; overflow-wrap: anywhere; }
+.app-health-error svg { flex: none; color: var(--status-crit); margin-top: 2px; }
+.app-health-error { align-items: flex-start; }
+.app-health .block { display: block; }
+.log.app-log .log-line { flex-direction: column; gap: 0; }
+.log.app-log .log-line + .log-line { margin-top: 4px; }
+.log.app-log { height: auto; max-height: 260px; font-size: 12.5px; }
 .badge { font-size: 11.5px; font-weight: 600; padding: 1px 8px; border-radius: 99px; background: var(--surface-2); color: var(--muted); }
 .badge.accent { background: var(--cta); color: var(--cta-text); }
 .badge.warn { background: var(--warn-bg); color: var(--warn-text); }

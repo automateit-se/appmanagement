@@ -162,6 +162,18 @@ The edge status is also shown for the edge client App Management runs (*In IoT O
 | New credentials (*Nya credentials*) | New credentials from IoT Open into the volume, then a restart |
 | Remove (*Ta bort*) | Removes the container, and optionally the volume with the credentials |
 
-The status shows the container state, start time, restarts and how many of the last 300 log lines look like errors. The log can be followed live and filtered to errors only.
+The status shows the container state, start time, restarts, memory use against the container's limit, how many apps run and how many of the last 300 log lines look like errors. The log can be followed live and filtered to errors only.
+
+When the installation's edge client runs somewhere else (a gateway, a Raspberry Pi, another server), the page says so, with its edge status in IoT Open: App Management can only show status, logs and app health for edge clients it runs itself.
+
+### App health
+
+For an installation whose edge client runs here, every installed app shows its health on the app list:
+
+- **Runs** (*Kör*), how long it has run and its memory; **Crashing** (*Kraschar*) with the number of crashes in the last hour and the latest error; **Not running** (*Körs inte*); **Waiting to start** (*Väntar på start*) right after it was installed.
+- **Log** (*Logg*): the app's own lines from the edge client's log, its start and load errors and Lua errors in its code.
+- **Restart** (*Starta om*): saves the app's instance unchanged in IoT Open, and the edge client restarts it within seconds. Needs the right to change the installation's apps.
+
+IoT Open's edge client runs one process per app and writes the app's log lines with the instance id as prefix (`edge-app-<id>[<pid>]: …`). The backend reads the container's process list (Docker's `top`, which runs `ps` on the host) and its log; nothing is run inside the container. Error lines are recognised by their text, since the edge client logs information and errors the same way.
 
 See [SECURITY.md](SECURITY.md) before giving App Management access to Docker.

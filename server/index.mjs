@@ -94,7 +94,7 @@ export function createApp(cfg, opts = {}) {
       return sendJson(res, 200, await presence(token, inst));
     }
 
-    if ((m = /^\/app-api\/edge\/(\d{1,12})(?:\/([a-z-]+))?$/.exec(p))) {
+    if ((m = /^\/app-api\/edge\/(\d{1,12})(?:\/([a-z-]+(?:\/\d{1,12}\/[a-z]+)?))?$/.exec(p))) {
       if (!edge) throw new HttpError(404, 'Hantering av edge clients är inte aktiverad (DOCKER_HOST saknas)');
       if (!edgeLimit(ip)) throw new HttpError(429, 'För många anrop, vänta en stund');
       const iid = Number(m[1]);
@@ -108,6 +108,12 @@ export function createApp(cfg, opts = {}) {
       if (req.method === 'POST' && sub === '') requireAccess(a, a.createEdge, 'sätta upp en ny edge client på den här servern');
       if (req.method === 'GET' && sub === '') return sendJson(res, 200, await edge.status(iid));
       if (req.method === 'GET' && sub === 'logs') return sendJson(res, 200, await edge.logs(iid, url.searchParams.get('tail')));
+      if (req.method === 'GET' && sub === 'apps') return sendJson(res, 200, await edge.apps(iid));
+      if (req.method === 'GET' && (m = /^apps\/(\d{1,12})\/logs$/.exec(sub))) {
+        const logic = url.searchParams.get('logic');
+        if (logic && !/^\d{1,12}-[\w.+-]{1,64}$/.test(logic)) throw new HttpError(400, 'Ogiltig parameter logic');
+        return sendJson(res, 200, await edge.appLogs(iid, m[1], logic || null));
+      }
       if (req.method === 'DELETE' && sub === '') {
         return sendJson(res, 200, await exclusive(iid, () => edge.remove(iid, url.searchParams.get('config') === 'true')));
       }

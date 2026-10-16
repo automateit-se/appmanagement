@@ -28,6 +28,9 @@ export const backend = {
   presence: (iid) => call(`presence/${iid}`),
   edgeStatus: (iid) => call(`edge/${iid}`),
   edgeLogs: (iid, tail = 200) => call(`edge/${iid}/logs?tail=${tail}`),
+  /** Health of the apps on the local edge client: { exists, running, memory, apps: { [instance]: … }, byLogic } */
+  edgeApps: (iid) => call(`edge/${iid}/apps`),
+  edgeAppLogs: (iid, instance, logic) => call(`edge/${iid}/apps/${instance}/logs${logic ? `?logic=${seg(logic)}` : ''}`),
   edgeCreate: (iid, replaceOnline = false) => call(`edge/${iid}`, { method: 'POST', body: { confirm: true, replaceOnline } }),
   edgeRenew: (iid) => call(`edge/${iid}/credentials`, { method: 'POST', body: { confirm: true } }),
   edgeAction: (iid, action) => call(`edge/${iid}/${action}`, { method: 'POST', body: {} }),

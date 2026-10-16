@@ -4,6 +4,7 @@ import { onDefaultServer, serverLabel } from '../api/server.js';
 import { Icon } from '../components/icons.jsx';
 import { Confirm, errText } from '../components/Modal.jsx';
 import { PresenceBadge, fmtSince, usePresence } from '../components/EdgePresence.jsx';
+import { megabytes, useAppHealth } from '../components/AppHealth.jsx';
 
 // IoT Open Docker Edge Client for one installation, run in the same Docker environment as App Management.
 
@@ -124,6 +125,39 @@ function ExistingWarning({ p }) {
   );
 }
 
+/**
+ * No edge client here, and the user may not set one up: what IoT Open says about the installation's edge client,
+ * which may well run elsewhere (a gateway, a Raspberry Pi, another server).
+ */
+function Elsewhere({ p, access }) {
+  const why = !access?.manageEdge
+    ? `Din roll i IoT Open (${access?.role || 'okänd'}) får inte sätta upp en edge client här; det kräver rätten att byta installationens gateway-credentials.`
+    : access?.restrictedBy === 'EDGE_PERMISSION'
+      ? 'Att sätta upp en edge client här kräver en roll i IoT Open med en särskild rättighet. Kontakta den som administrerar rollerna i IoT Open.'
+      : 'På den här servern får bara utvalda användare sätta upp edge clients. Kontakta den som driftar App Management.';
+  const here = 'Status, logg och apparnas hälsa kan App Management bara visa för edge clients som körs här.';
+  if (p?.state === 'online' || p?.state === 'offline') {
+    return (
+      <>
+        <div className="info-box">
+          <p className="row gap wrap" style={{ margin: '0 0 6px' }}>
+            <strong>Installationens edge client körs någon annanstans</strong> <PresenceBadge p={p} />
+          </p>
+          IoT Open rapporterar att installationen har en edge client{p.since ? ` (${p.state === 'online' ? 'online' : 'offline'} sedan ${fmtSince(p.since)})` : ''}, men den
+          körs inte här i App Management, utan till exempel på en gateway, en Raspberry Pi eller en annan server.{' '}
+          {p.state === 'online' ? 'Apparna körs av den.' : 'Apparna körs inte förrän den är online igen.'} {here}
+        </div>
+        <p className="muted small">{why}</p>
+      </>
+    );
+  }
+  return (
+    <div className="info-box">
+      {p ? 'Installationen har ingen edge client här, och ingen edge client har rapporterat status till IoT Open.' : 'Installationen har ingen edge client här.'} {why}
+    </div>
+  );
+}
+
 function Setup({ iid, onCreated }) {
   const [ok, setOk] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -198,6 +232,8 @@ export default function EdgeClient({ installation, access }) {
   const [removeConfig, setRemoveConfig] = useState(true);
   const [logKey, setLogKey] = useState(0);
   const [presence, reloadPresence] = usePresence(iid, st?.exists ? 20000 : 0);
+  const [health] = useAppHealth(iid, !!st?.running);
+  const appCount = health ? Object.values(health.apps).filter((a) => a.running).length : 0;
   const [jobError, setJobError] = useState(null); // { action, error } of a set-up or update that failed
   const working = !!st?.job?.running;
 
@@ -270,14 +306,7 @@ export default function EdgeClient({ installation, access }) {
         {error && <div className="error-box">{error}</div>}
         {jobFailed}
         {!access?.createEdge ? (
-          <div className="info-box">
-            Det finns ingen edge client för installationen här.{' '}
-            {!access?.manageEdge
-              ? `Din roll i IoT Open (${access?.role || 'okänd'}) får inte sätta upp en; det kräver rätten att byta installationens gateway-credentials.`
-              : access?.restrictedBy === 'EDGE_PERMISSION'
-                ? 'På den här servern krävs en roll i IoT Open med en särskild rättighet för att sätta upp nya edge clients. Kontakta den som administrerar rollerna i IoT Open.'
-                : 'På den här servern får bara utvalda användare sätta upp nya edge clients. Kontakta den som driftar App Management.'}
-          </div>
+          <Elsewhere p={presence} access={access} />
         ) : (
           <Setup iid={iid} onCreated={(s) => (setJobError(null), accept(s))} />
         )}
@@ -330,6 +359,21 @@ export default function EdgeClient({ installation, access }) {
               {presence?.state === 'offline' && st.running && <span className="muted small">Containern kör men har inte kontakt med IoT Open. Se loggen.</span>}
               {presence?.state === 'unknown' && st.running && <span className="muted small">Ingen status från edge clienten ännu.</span>}
             </dd>
+            {health?.memory && (
+              <>
+                <dt>Minne</dt>
+                <dd>
+                  {megabytes(health.memory.usage / 1024)}
+                  {health.memory.limit ? ` av ${megabytes(health.memory.limit / 1024)}` : ''}
+                </dd>
+              </>
+            )}
+            {health?.processesRead && (
+              <>
+                <dt>Appar som kör</dt>
+                <dd>{appCount}</dd>
+              </>
+            )}
             <dt>Omstarter</dt>
             <dd>{st.restartCount}</dd>
             <dt>Fel i loggen</dt>

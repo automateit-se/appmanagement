@@ -275,6 +275,31 @@ const containers = new Map(); // id -> container
 const volumes = new Map();
 const networks = new Map([['bridge', { Name: 'bridge', Driver: 'bridge' }]]);
 
+// Edge apps on a running mock edge client: one process per instance of its installation, like IoT Open's edged.
+// An instance whose name contains "alarm" crashes over and over (edged restarts it every 10 seconds).
+const crashes = (inst) => /alarm/i.test(inst.name);
+function mockAppProcesses(c, { log = false } = {}) {
+  // a stopped container keeps its log
+  if ((c.state !== 'running' && !log) || !c.config || !c.startedAt) return [];
+  const since = Date.parse(c.startedAt || 0);
+  return instances
+    .filter((i) => i.installation_id === Number(c.config.installation_id))
+    .map((i) => ({ inst: i, started: Math.max(since, i.updated * 1000), crashing: crashes(i), pid: 100 + (i.id % 1000) }));
+}
+
+function dockerTop(c) {
+  const now = Date.now();
+  const rows = [
+    ['2001', '18200', String(Math.round((now - Date.parse(c.startedAt)) / 1000)), '/usr/bin/python3 /usr/bin/supervisord -n -c /etc/supervisor/supervisord.conf'],
+    ['2002', '9100', '60', '/usr/bin/iotopen-rt /usr/bin/edged'],
+  ];
+  for (const a of mockAppProcesses(c)) {
+    if (a.crashing) continue;
+    rows.push([String(3000 + a.pid), String(14000 + (a.inst.id % 7) * 1000), String(Math.round((now - a.started) / 1000)), `/usr/bin/iotopen-rt edge-app -a /var/lib/iot-open/edge/configs/${a.inst.id} -r 5`]);
+  }
+  return { Titles: ['PID', 'RSS', 'ELAPSED', 'COMMAND'], Processes: rows };
+}
+
 function dockerLogs(c) {
   const t0 = Date.now() - 60_000;
   const lines = [];
@@ -287,6 +312,26 @@ function dockerLogs(c) {
     lines.push([1, `${ts(2)} mosquitto: bridge lynx-${c.config.client_id} connected`]);
     lines.push([1, `${ts(3)} edged: syncing apps for installation ${c.config.installation_id}`]);
     if (c.restarts > 1) lines.push([2, `${ts(4)} edged: error: connection lost, reconnecting`]);
+    const at = (ms) => new Date(ms).toISOString();
+    const apps = [];
+    for (const a of mockAppProcesses(c, { log: true })) {
+      const id = a.inst.id;
+      if (!a.crashing) {
+        apps.push([a.started, 2, `edge-app-${id}[${a.pid}]: Starting edge app ${id}`]);
+        apps.push([a.started + 500, 2, `edge-app-${id}[${a.pid}]: ${a.inst.name} started`]);
+        continue;
+      }
+      // a crash loop: started, failed, restarted by edged 10 seconds later
+      const end = c.state === 'running' ? Date.now() : Date.parse(c.finishedAt);
+      for (let t = a.started, n = 0; t <= end && n < 12; t += 10_000, n++) {
+        const pid = a.pid + n;
+        apps.push([t, 2, `edge-app-${id}[${pid}]: Starting edge app ${id}`]);
+        apps.push([t + 200, 2, `edge-app-${id}[${pid}]: error running app code: /var/lib/iot-open/edge/apps/${a.inst.app_id}-${a.inst.version}:42: attempt to index a nil value (global 'sensor')`]);
+        apps.push([t + 300, 2, `edged[12]: pid ${pid} died with 1`]);
+      }
+    }
+    apps.sort((x, y) => x[0] - y[0]);
+    for (const [t, stream, text] of apps) lines.push([stream, `${at(t)} ${text}`]);
   }
   const bufs = [];
   for (const [stream, text] of lines) {
@@ -633,6 +678,14 @@ async function dockerApi(req, res, p, url) {
       return send(res, 200, '');
     }
     if (sub === 'logs') return send(res, 200, dockerLogs(c), { 'Content-Type': 'application/vnd.docker.multiplexed-stream' });
+    if (sub === 'top') {
+      if (c.state !== 'running') return send(res, 409, { message: `Container ${c.Id} is not running` });
+      return send(res, 200, dockerTop(c));
+    }
+    if (sub === 'stats') {
+      const apps = mockAppProcesses(c).filter((a) => !a.crashing).length;
+      return send(res, 200, { memory_stats: c.state === 'running' ? { usage: (40 + 6 * apps) * 1048576, limit: 256 * 1048576, stats: { inactive_file: 2 * 1048576 } } : {} });
+    }
     if (sub === 'start') {
       if (c.state === 'running') return send(res, 304, '');
       Object.assign(c, { state: 'running', startedAt: new Date().toISOString() });

@@ -62,6 +62,10 @@ export function dockerClient(target) {
       const err = lines.map((l) => { try { return JSON.parse(l); } catch { return {}; } }).find((l) => l.error);
       if (r.status >= 400 || err) throw new HttpError(502, `Docker kunde inte hämta ${image}: ${err?.error || r.status}`);
     },
+    /** The container's processes, with ps's own columns (Docker runs ps on the host, nothing runs inside). */
+    top: (id, psArgs) => json('GET', `/containers/${encodeURIComponent(id)}/top`, { query: { ps_args: psArgs }, timeout: 15_000 }),
+    /** One sample of the container's resource use. */
+    stats: (id) => json('GET', `/containers/${encodeURIComponent(id)}/stats`, { query: { stream: 'false', 'one-shot': 'true' }, timeout: 15_000 }),
     async logs(id, tail = 200) {
       const r = await request('GET', `/containers/${encodeURIComponent(id)}/logs`, { query: { stdout: 1, stderr: 1, timestamps: 1, tail } });
       if (r.status >= 400) throw new HttpError(502, `Docker: kunde inte läsa loggen (HTTP ${r.status})`);

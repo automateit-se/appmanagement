@@ -9,6 +9,7 @@ import { Icon } from '../components/icons.jsx';
 import { Confirm, errText } from '../components/Modal.jsx';
 import { InstallDialog } from '../components/InstallDialog.jsx';
 import { PresenceBadge, usePresence } from '../components/EdgePresence.jsx';
+import { AppHealthPanel, instanceHealth, useAppHealth } from '../components/AppHealth.jsx';
 
 /**
  * Latest version available for an IoT Open app: from GitHub when the organization publishes it from there through
@@ -49,7 +50,7 @@ function EdgeHint({ iid, access }) {
       <div className="info-box row gap wrap">
         <Icon name="box" />
         <span className="grow">
-          Edge client: <PresenceBadge p={p} /> {st?.exists ? 'Den körs här i App Management.' : 'Apparna körs av installationens edge client.'}
+          Edge client: <PresenceBadge p={p} /> {st?.exists ? 'Den körs här i App Management.' : local && st ? 'Apparna körs av installationens edge client, som körs någon annanstans än här i App Management.' : 'Apparna körs av installationens edge client.'}
         </span>
       </div>
     );
@@ -86,6 +87,9 @@ export default function InstalledApps({ installation, access }) {
   const [job, setJob] = useState(null);
   const [removing, setRemoving] = useState(null);
   const [busy, setBusy] = useState(false);
+  // apps run by an edge client here in App Management's Docker environment: health read from Docker
+  const local = config.edgeClients && onDefaultServer() && !!access?.viewEdge;
+  const [health, reloadHealth] = useAppHealth(iid, local && !!rows?.length);
 
   const load = useCallback(async () => {
     setError('');
@@ -154,6 +158,9 @@ export default function InstalledApps({ installation, access }) {
                 </div>
               </header>
               {app?.short_description && <p className="small card-text">{app.short_description}</p>}
+              {health && (
+                <AppHealthPanel iid={iid} inst={inst} health={instanceHealth(health, inst)} windowSec={health.windowSec} canRestart={canUpdate} onRestarted={reloadHealth} />
+              )}
               <div className="badges">
                 {latest?.source === 'github' ? <span className="badge">GitHub</span> : <span className="badge">IoT Open</span>}
                 {update && <span className="badge accent">Ny version {latest.version}</span>}
