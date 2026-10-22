@@ -74,6 +74,8 @@ jobs:
         with:
           context: .
           platforms: linux/amd64,linux/arm64
+          # always fetch the base image again, so security updates of node:22 are picked up
+          pull: true
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
