@@ -81,10 +81,71 @@ async function viaStatusApi(lynx, token, iid, clientId) {
   }
 }
 
+/** Retained statuses of many topics over one MQTT connection: Map topic -> { state, since }. */
+function manyViaMqtt(url, token, topics, timeoutMs) {
+  return new Promise((resolve) => {
+    const found = new Map();
+    let done = false;
+    let client = null;
+    let acks = 0;
+    const expected = Math.ceil(topics.length / 50); // the client subscribes in chunks of 50
+    const finish = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      try {
+        client?.close();
+      } catch {
+        /* ignore */
+      }
+      resolve(found);
+    };
+    const timer = setTimeout(finish, timeoutMs);
+    const wanted = new Set(topics);
+    try {
+      client = createMqtt({
+        url,
+        token,
+        reconnect: false,
+        onState: (s) => {
+          if (s === 'live') client.setSubscriptions(topics);
+          if (s === 'failed' || s === 'error' || s === 'offline') finish();
+        },
+        onSubscribed: () => {
+          if (++acks >= expected) setTimeout(finish, 1000);
+        },
+        onMessage: (t, payload) => {
+          if (!wanted.has(t)) return;
+          const state = parseStatus(payload);
+          if (state) found.set(t, { state, since: toSeconds(payload.timestamp) });
+        },
+      });
+    } catch {
+      finish();
+    }
+  });
+}
+
+/** Runs fn over items with at most n at a time. */
+async function pool(items, n, fn) {
+  const out = new Array(items.length);
+  let i = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(n, items.length) }, async () => {
+      while (i < items.length) {
+        const k = i++;
+        out[k] = await fn(items[k]);
+      }
+    }),
+  );
+  return out;
+}
+
 export function presenceChecker(cfg, lynx, { timeoutMs = 3500 } = {}) {
   const mqttUrl = cfg.lynxUrl.replace(/^http/, 'ws') + '/mqtt';
   const cache = ttlCache(15_000, 200);
-  return (token, inst) =>
+  const many = ttlCache(30_000, 200);
+  const check = (token, inst) =>
     cache(`${inst.id}|${createHash('sha256').update(token).digest('hex')}`, async () => {
       const topic = `${inst.client_id}/${STATUS_TOPIC}`;
       const [m, s] = await Promise.all([viaMqtt(mqttUrl, token, topic, timeoutMs), viaStatusApi(lynx, token, inst.id, inst.client_id)]);
@@ -92,4 +153,25 @@ export function presenceChecker(cfg, lynx, { timeoutMs = 3500 } = {}) {
       const r = m.state ? { ...m, since: m.since || (s.state === m.state ? s.since : null) } : s.state ? s : null;
       return r ? { state: r.state, since: r.since || null, source: r.source, topic } : { state: 'unknown', reason: m.reason || 'no-message', topic };
     });
+
+  /**
+   * Edge status of many installations at once (the list of installations): one MQTT connection for all of them, and
+   * IoT Open's status API only for those that did not answer on MQTT. { [installation id]: { state, since } }
+   */
+  check.many = (token, insts) =>
+    many(`${insts.map((i) => i.id).join(',')}|${createHash('sha256').update(token).digest('hex')}`, async () => {
+      const topic = (i) => `${i.client_id}/${STATUS_TOPIC}`;
+      const fromMqtt = await manyViaMqtt(mqttUrl, token, insts.map(topic), timeoutMs);
+      const rest = insts.filter((i) => !fromMqtt.has(topic(i)));
+      const fromApi = await pool(rest, 6, (i) => viaStatusApi(lynx, token, i.id, i.client_id));
+      const out = {};
+      for (const i of insts) {
+        const m = fromMqtt.get(topic(i));
+        const s = m ? null : fromApi[rest.indexOf(i)];
+        const r = m || (s?.state ? s : null);
+        out[i.id] = r ? { state: r.state, since: r.since || null } : { state: 'unknown' };
+      }
+      return out;
+    });
+  return check;
 }

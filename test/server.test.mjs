@@ -301,6 +301,21 @@ test('MQTT: topics, history and live messages of the apps', async () => {
   assert.match(msg.msg, /Door opened/);
 });
 
+test('edge status of many installations at once', async () => {
+  // a fresh backend, so nothing is cached from the other tests
+  const s = await start(envFor());
+  const g = (q, key = KEY) => fetch(`${s.url}/app-api/presence${q}`, { headers: key ? { 'X-API-Key': key } : {} });
+  // "Kontoret" (1002) has had an edge client (online or, after the tests above, offline); "Demohuset" (1001) none
+  const r = await (await g('?ids=1001,1002,4242')).json();
+  assert.ok(['online', 'offline'].includes(r[1002].state), r[1002].state);
+  assert.equal(r[1001].state, 'unknown');
+  assert.equal(r[4242], undefined, 'installations the user cannot see are left out');
+  assert.equal((await g('?ids=abc')).status, 400);
+  assert.equal((await g('?ids=' + Array.from({ length: 201 }, (_, i) => i + 1).join(','))).status, 400);
+  assert.equal((await g('?ids=1001', null)).status, 401);
+  s.server.close();
+});
+
 test('EDGE_CLIENT_NETWORK is created on first use', async () => {
   const s = await start(envFor({ EDGE_CLIENT_NETWORK: 'iotopen-edge' }));
   const r = await fetch(s.url + '/app-api/edge/1002', { method: 'POST', headers: { 'X-API-Key': KEY }, body: JSON.stringify({ confirm: true, replaceOnline: true }) });

@@ -99,6 +99,18 @@ export function createApp(cfg, opts = {}) {
       return mqtt.live(req, res, token, inst, patterns);
     }
 
+    // Edge status of many installations at once, for the list of installations: ?ids=1,2,3 (at most 200)
+    if (p === '/app-api/presence') {
+      if (req.method !== 'GET') throw new HttpError(405, 'Metoden stöds inte');
+      if (!edgeLimit(ip)) throw new HttpError(429, 'För många anrop, vänta en stund');
+      const token = requestToken(req);
+      const ids = [...new Set(String(url.searchParams.get('ids') || '').split(',').filter((x) => /^\d{1,12}$/.test(x)).map(Number))];
+      if (!ids.length || ids.length > 200) throw new HttpError(400, 'Ange 1-200 installationer');
+      // only installations the user can see in IoT Open
+      const insts = (await lynx.installations(token)).filter((i) => ids.includes(Number(i.id)));
+      return sendJson(res, 200, insts.length ? await presence.many(token, insts) : {});
+    }
+
     // Edge status in IoT Open (is there an edge client, is it online?) - read only, any user with access
     if ((m = /^\/app-api\/presence\/(\d{1,12})$/.exec(p))) {
       if (req.method !== 'GET') throw new HttpError(405, 'Metoden stöds inte');

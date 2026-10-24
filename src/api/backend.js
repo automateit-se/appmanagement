@@ -26,6 +26,8 @@ export const backend = {
   access: (iid) => call(`access/${iid}`),
   /** Edge status in IoT Open: { state: 'online' | 'offline' | 'unknown', since } */
   presence: (iid) => call(`presence/${iid}`),
+  /** Edge status of many installations: { [id]: { state, since } } */
+  presenceMany: (ids) => call(`presence?ids=${ids.join(',')}`),
   edgeStatus: (iid) => call(`edge/${iid}`),
   edgeLogs: (iid, tail = 200) => call(`edge/${iid}/logs?tail=${tail}`),
   /** Health of the apps on the local edge client: { exists, running, memory, apps: { [instance]: … }, byLogic } */

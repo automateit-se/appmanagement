@@ -167,7 +167,7 @@ IoT Open keeps **one set of credentials per installation**: creating new ones di
 - **Offline**: a warning that the installation has had an edge client that will not be able to reconnect.
 - **Unknown**: no edge client has reported; the general warning about credentials is shown.
 
-The edge status is also shown for the edge client App Management runs (*In IoT Open*, *I IoT Open*: online means it really reached IoT Open) and on the installation's app list.
+The edge status is also shown for the edge client App Management runs (*In IoT Open*, *I IoT Open*: online means it really reached IoT Open), on the installation's app list, and on the list of installations: every installation that has an edge client, wherever it runs, gets *Online* or *Offline* on its card. The list reads the status of all installations at once (`GET /app-api/presence?ids=…`: one MQTT connection, and IoT Open's status API only for installations that did not answer on MQTT) and refreshes it every minute.
 
 | Action | What it does |
 |---|---|

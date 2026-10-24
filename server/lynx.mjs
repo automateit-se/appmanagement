@@ -72,6 +72,8 @@ export function lynxClient(cfg) {
     /** The signed-in user, or 401. Cached for a minute per token. */
     me: (token) => meCache(tokenKey(token), () => call(token, '/api/v2/user/me')),
     /** Installation the user can see (from /installationinfo), or 404. */
+    /** The installations the user can see (cached for a minute). */
+    installations: async (token) => (await instCache(tokenKey(token), () => call(token, '/api/v2/installationinfo?assigned=false'))) || [],
     async installation(token, iid) {
       const list = await instCache(tokenKey(token), () => call(token, '/api/v2/installationinfo?assigned=false'));
       const inst = (list || []).find((i) => Number(i.id) === Number(iid));
