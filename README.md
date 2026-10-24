@@ -201,3 +201,7 @@ See [SECURITY.md](SECURITY.md) before giving App Management access to Docker.
 - **Keep as an app's log** (*Spara som logg för*): the picked topics are kept for an app in this browser, and the app's card gets *MQTT log* (*MQTT-logg*).
 
 Live messages come from an MQTT subscription (WebSocket to `LYNX_URL/mqtt`) that the backend holds for the open page and sends on as server-sent events: at most 50 messages per second, for 15 minutes at a time. Only `obj/` and `evt/` can be read, at most 10 patterns at a time. It needs App Management's own IoT Open server (not another server picked at sign-in).
+
+## License
+
+MIT, see [LICENSE](LICENSE).

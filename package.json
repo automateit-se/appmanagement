@@ -2,6 +2,7 @@
   "name": "appmanagement",
   "version": "0.1.7",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "description": "Manage IoT Open Edge Apps: install apps from GitHub on installations, configure and update them, and run an IoT Open Docker Edge Client.",
   "engines": {
