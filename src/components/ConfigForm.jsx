@@ -258,6 +258,8 @@ function Control({ name, input, inputs, value, onChange, pick, errors, path }) {
   if (kind === 'repeat') return <Repeat name={name} input={input} inputs={inputs} value={value} onChange={onChange} pick={pick} errors={errors} path={path} />;
   if (kind === 'json') return <JsonInput id={id} value={value} onChange={onChange} />;
   if (input.multiline) return <textarea id={id} rows={4} value={value ?? ''} onChange={(e) => onChange(e.target.value)} />;
+  // type "password" (a PIN, an API key): hidden while typed and never offered by the browser's autofill
+  if (String(input.type).toLowerCase() === 'password') return <input id={id} type="password" autoComplete="new-password" value={value ?? ''} onChange={(e) => onChange(e.target.value)} spellCheck={false} />;
   return <input id={id} value={value ?? ''} onChange={(e) => onChange(e.target.value)} spellCheck={false} />;
 }
 
