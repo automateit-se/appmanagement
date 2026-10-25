@@ -5,6 +5,7 @@ import { cleanValues, formLayout, initialValues, inputKind, matchesFilter, valid
 import { ensureGithubVersion, githubRepo, latestVersion, normUrl } from '../src/lib/install.js';
 import { demuxLogs, splitImage } from '../server/docker.mjs';
 import { makeTar } from '../server/tar.mjs';
+import { checkPorts, parsePorts } from '../server/edgeClient.mjs';
 import { checkOrigin, loadConfig, parseDockerHost } from '../server/config.mjs';
 import { parseInclude, prettyName, readManifest } from '../server/github.mjs';
 import { parseStatus } from '../server/presence.mjs';
@@ -310,4 +311,25 @@ test('app.json as documented by IoT Open: values, checkbox, repeat', () => {
   });
   assert.equal(validate(doc, { ...ok, temp: [ok.temp[0]] }).temp, 'Minst 2');
   assert.equal(validate(doc, { ...ok, days: ['xyz'] }).days, 'Välj bland alternativen');
+});
+
+test('EDGE_PORT_RANGE and EDGE_PORT_BIND', () => {
+  assert.equal(loadConfig({}).edge.ports, null);
+  assert.deepEqual(loadConfig({ EDGE_PORT_RANGE: '18000-18099' }).edge.ports, { from: 18000, to: 18099, bind: '0.0.0.0' });
+  assert.deepEqual(loadConfig({ EDGE_PORT_RANGE: '18000 - 18010', EDGE_PORT_BIND: '192.168.1.20' }).edge.ports, { from: 18000, to: 18010, bind: '192.168.1.20' });
+  for (const r of ['80-90', '18099-18000', '18000', '18000-70000']) assert.throws(() => loadConfig({ EDGE_PORT_RANGE: r }), /EDGE_PORT_RANGE/);
+  assert.throws(() => loadConfig({ EDGE_PORT_RANGE: '18000-18099', EDGE_PORT_BIND: 'all; rm' }), /EDGE_PORT_BIND/);
+});
+
+test('published ports: label and checks', () => {
+  assert.deepEqual(parsePorts('8090:18010, 8091:18011,bad'), [{ container: 8090, host: 18010 }, { container: 8091, host: 18011 }]);
+  assert.deepEqual(parsePorts(undefined), []);
+  const range = { from: 18000, to: 18099 };
+  assert.deepEqual(checkPorts([{ container: '8091', host: 18011 }, { container: 8090, host: 18010 }], range), [{ container: 8090, host: 18010 }, { container: 8091, host: 18011 }]);
+  assert.throws(() => checkPorts([{ container: 1883, host: 18010 }], range), /1883/);
+  assert.throws(() => checkPorts([{ container: 80, host: 18010 }], range), /1024/);
+  assert.throws(() => checkPorts([{ container: 8090, host: 17999 }], range), /utanför/);
+  assert.throws(() => checkPorts([{ container: 8090, host: 18010 }], range, new Set([18010])), /annan edge client/);
+  assert.throws(() => checkPorts(Array.from({ length: 6 }, (_, i) => ({ container: 9000 + i, host: 18000 + i })), range), /Högst 5/);
+  assert.throws(() => checkPorts('8090', range), /lista/);
 });

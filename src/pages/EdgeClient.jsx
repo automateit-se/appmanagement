@@ -221,6 +221,109 @@ function Setup({ iid, onCreated }) {
   );
 }
 
+const JOB_TEXT = { create: 'Sätter upp edge client', update: 'Uppdaterar edge client', ports: 'Byter portar' };
+const JOB_FAILED = { create: 'Uppsättningen av edge clienten misslyckades', update: 'Uppdateringen misslyckades', ports: 'Portarna kunde inte bytas' };
+
+/** The next free host port in the range, after the ones in use (this edge client's and others'). */
+function freePort(range, taken) {
+  for (let p = range.from; p <= range.to; p++) if (!taken.includes(p)) return p;
+  return '';
+}
+
+/**
+ * Ports of apps in the edge client published on this server (EDGE_PORT_RANGE), e.g. the local dashboard on 8090.
+ * Changing them recreates the container, so it is only offered to those who may set up edge clients here.
+ */
+function Ports({ iid, st, canEdit, onSaved, busy, setBusy }) {
+  const [rows, setRows] = useState(null); // editing: [{ container, host }]
+  const [error, setError] = useState('');
+  const range = st.portRange;
+  if (!range) return null;
+  const host = window.location.hostname;
+  const taken = (list) => [...range.used, ...list.map((r) => Number(r.host))];
+  const save = async () => {
+    setBusy('ports');
+    setError('');
+    try {
+      onSaved(await backend.edgePorts(iid, rows.map((r) => ({ container: Number(r.container), host: Number(r.host) }))));
+      setRows(null);
+    } catch (e) {
+      setError(errText(e));
+    } finally {
+      setBusy('');
+    }
+  };
+  return (
+    <section className="panel">
+      <h2>
+        <Icon name="external" size={18} /> Publicerade portar
+      </h2>
+      <p className="muted small">
+        En app i edge clienten som har en egen webbsida, till exempel Lokal dashboard på port 8090, nås från nätverket via en port på den här servern ({range.from}-{range.to}). Edge
+        clienten startas om när portarna ändras.
+      </p>
+      {!rows ? (
+        <>
+          {st.ports.length ? (
+            <ul className="port-list">
+              {st.ports.map((p) => (
+                <li key={p.host}>
+                  Appens port <code>{p.container}</code> nås på{' '}
+                  <a href={`http://${host}:${p.host}/`} target="_blank" rel="noreferrer">
+                    {host}:{p.host}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="muted small">Inga portar publicerade.</p>
+          )}
+          {canEdit && (
+            <button type="button" className="btn" disabled={!!busy} onClick={() => setRows(st.ports.length ? st.ports.map((p) => ({ ...p })) : [{ container: 8090, host: freePort(range, taken([])) }])}>
+              <Icon name="settings" size={16} /> Ändra portar
+            </button>
+          )}
+        </>
+      ) : (
+        <>
+          {rows.map((r, i) => (
+            <div key={i} className="row gap port-row">
+              <label className="field">
+                <span>Appens port</span>
+                <input type="number" min="1024" max="65535" value={r.container} onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, container: e.target.value } : x)))} />
+              </label>
+              <label className="field">
+                <span>Serverns port</span>
+                <input type="number" min={range.from} max={range.to} value={r.host} onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, host: e.target.value } : x)))} />
+              </label>
+              <button type="button" className="icon-btn" aria-label="Ta bort porten" title="Ta bort porten" onClick={() => setRows(rows.filter((_, j) => j !== i))}>
+                <Icon name="trash" size={16} />
+              </button>
+            </div>
+          ))}
+          {range.used.length > 0 && <p className="muted small">Används av andra edge clients: {range.used.join(', ')}</p>}
+          <div className="row gap wrap">
+            {rows.length < 5 && (
+              <button type="button" className="btn" onClick={() => setRows([...rows, { container: '', host: freePort(range, taken(rows)) }])}>
+                <Icon name="plus" size={16} /> Lägg till port
+              </button>
+            )}
+            <span className="grow" />
+            <button type="button" className="btn" disabled={!!busy} onClick={() => (setRows(null), setError(''))}>
+              Avbryt
+            </button>
+            <button type="button" className="btn primary" disabled={!!busy} onClick={save}>
+              {busy === 'ports' ? 'Sparar…' : 'Spara och starta om'}
+            </button>
+          </div>
+          <p className="muted small">Appen svarar på vanlig http. Publicera bara på ett nätverk du litar på.</p>
+        </>
+      )}
+      {error && <div className="error-box">{error}</div>}
+    </section>
+  );
+}
+
 export default function EdgeClient({ installation, access }) {
   const iid = installation.id;
   // IoT Open decides: gateway/reset/password on the installation (see server/access.mjs)
@@ -281,7 +384,7 @@ export default function EdgeClient({ installation, access }) {
 
   const jobFailed = jobError && (
     <div className="error-box">
-      {jobError.action === 'create' ? 'Uppsättningen av edge clienten misslyckades' : 'Uppdateringen misslyckades'}: {jobError.error}
+      {JOB_FAILED[jobError.action] || 'Åtgärden misslyckades'}: {jobError.error}
     </div>
   );
 
@@ -289,7 +392,7 @@ export default function EdgeClient({ installation, access }) {
     return (
       <section className="panel">
         <h2>
-          <Icon name="box" size={18} /> {st.job.action === 'create' ? 'Sätter upp edge client' : 'Uppdaterar edge client'}
+          <Icon name="box" size={18} /> {JOB_TEXT[st.job.action] || 'Arbetar'}
         </h2>
         <div className="progress">
           <span className="spinner" aria-hidden="true" />
@@ -429,6 +532,7 @@ export default function EdgeClient({ installation, access }) {
           )}
         </section>
       )}
+      {st?.exists && <Ports iid={iid} st={st} canEdit={!readOnly && !!access?.createEdge} busy={busy} setBusy={setBusy} onSaved={(s) => (setJobError(null), accept(s))} />}
       {st?.exists && <Logs iid={iid} refreshKey={logKey} />}
 
       {confirm === 'update' && (
@@ -456,8 +560,8 @@ export default function EdgeClient({ installation, access }) {
         <Confirm title="Ta bort edge clienten?" confirmText="Ta bort" danger busy={busy === 'remove'} onClose={() => setConfirm(null)} onConfirm={() => run('remove', () => backend.edgeRemove(iid, removeConfig))}>
           <p>Containern stoppas och tas bort. Apparna på installationen ligger kvar i IoT Open men körs inte förrän en edge client är kopplad igen.</p>
           <label className="check">
-            <input type="checkbox" checked={removeConfig} onChange={(e) => setRemoveConfig(e.target.checked)} /> Ta även bort sparade credentials (volymen{' '}
-            <code>iotopen-edge-{iid}-config</code>)
+            <input type="checkbox" checked={removeConfig} onChange={(e) => setRemoveConfig(e.target.checked)} /> Ta även bort sparade credentials och appdata (volymerna{' '}
+            <code>iotopen-edge-{iid}-config</code> och <code>-data</code>)
           </label>
         </Confirm>
       )}

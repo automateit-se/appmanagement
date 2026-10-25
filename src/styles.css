@@ -366,3 +366,8 @@ select.compact { width: auto; padding: 4px 8px; font-size: 13px; }
 .mqtt-log.compact .mqtt-line + .mqtt-line { margin-top: 4px; }
 .app-mqtt { display: flex; flex-direction: column; gap: 6px; }
 .app-mqtt-pick { align-self: flex-start; display: inline-flex; align-items: center; gap: 4px; }
+
+/* published ports of an edge client */
+.port-list { margin: 6px 0 12px; padding-left: 18px; }
+.port-row { align-items: flex-end; max-width: 480px; }
+.port-row .field { flex: 1; }

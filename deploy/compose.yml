@@ -9,7 +9,8 @@
 #
 # Edge clients are not defined here: App Management starts them as sibling containers through the socket proxy
 # (one iotopen-edge-<installation> per installation) on the network "iotopen-edge", which App Management creates
-# on first use: outbound only (IoT Open 443/8883), no published ports, apart from the edge and the proxy.
+# on first use: outbound only (IoT Open 443/8883). With EDGE_PORT_RANGE an app's port (e.g. the local dashboard)
+# can be published on a host port in that range, per edge client on its page in App Management.
 name: appmanagement
 
 services:
@@ -28,6 +29,9 @@ services:
       # can also require a role permission (EDGE_PERMISSION) and be limited to some users (EDGE_ADMINS, e.g. @example.com)
       EDGE_PERMISSION: ${EDGE_PERMISSION:-}
       EDGE_ADMINS: ${EDGE_ADMINS:-}
+      # an app's port in an edge client (e.g. the local dashboard's 8090) may be published on these host ports
+      EDGE_PORT_RANGE: ${EDGE_PORT_RANGE:-}
+      EDGE_PORT_BIND: ${EDGE_PORT_BIND:-0.0.0.0}
       # edge apps on GitHub: topic-tagged ones from these owners, plus IoT Open's own apps
       GITHUB_OWNERS: ${GITHUB_OWNERS:-automateit-se}
       GITHUB_INCLUDE: ${GITHUB_INCLUDE:-IoTOpen/edge-app-*}

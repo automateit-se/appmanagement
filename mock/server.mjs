@@ -741,6 +741,10 @@ async function dockerApi(req, res, p, url) {
     }
     if (sub === 'start') {
       if (c.state === 'running') return send(res, 304, '');
+      // like Docker: a host port taken by another container, or by something else on the host (18099 here)
+      const hostPorts = (x) => Object.values(x.HostConfig.PortBindings || {}).flat().map((b) => Number(b.HostPort));
+      const busy = hostPorts(c).find((hp) => hp === 18099 || [...containers.values()].some((o) => o !== c && o.state === 'running' && hostPorts(o).includes(hp)));
+      if (busy) return send(res, 500, { message: `driver failed programming external connectivity on endpoint ${c.Name}: Bind for 0.0.0.0:${busy} failed: port is already allocated` });
       Object.assign(c, { state: 'running', startedAt: new Date().toISOString() });
       if (c.config) setEdgeStatus(c.config.client_id, true);
       return send(res, 204, '');

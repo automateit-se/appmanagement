@@ -456,3 +456,70 @@ test('edge status in IoT Open', async () => {
   await fetch(`${s3.url}/app-api/edge/1001?config=true`, { method: 'DELETE', headers: { 'X-API-Key': KEY } });
   for (const x of [s, s2, s3]) x.server.close();
 });
+
+test('published ports of an edge client', async () => {
+  const s = await start(envFor({ EDGE_PORT_RANGE: '18000-18099' }));
+  const call = (method, p, body) => fetch(s.url + p, { method, headers: { 'X-API-Key': KEY, 'Content-Type': 'application/json' }, body: body && JSON.stringify(body) });
+  const wait = (p) => waitJob(p, KEY, s.url);
+  const created = [];
+  for (const iid of [1001, 1002]) {
+    assert.equal((await call('POST', `/app-api/edge/${iid}`, { confirm: true, replaceOnline: true })).status, 202);
+    created.push(iid);
+    await wait(`/app-api/edge/${iid}`);
+  }
+  let st = await (await call('GET', '/app-api/edge/1002')).json();
+  assert.deepEqual(st.ports, []);
+  assert.deepEqual(st.portRange, { from: 18000, to: 18099, used: [] });
+
+  // checked before anything is changed
+  assert.equal((await call('PUT', '/app-api/edge/1002/ports', { ports: [{ container: 1883, host: 18010 }] })).status, 400);
+  assert.equal((await call('PUT', '/app-api/edge/1002/ports', { ports: [{ container: 8090, host: 9000 }] })).status, 400);
+  assert.equal((await call('PUT', '/app-api/edge/1002/ports', { ports: [{ container: 8090, host: 18010 }, { container: 8091, host: 18010 }] })).status, 400);
+
+  // published: the container is recreated with the port, and keeps it through an update
+  assert.equal((await call('PUT', '/app-api/edge/1002/ports', { ports: [{ container: 8090, host: 18010 }] })).status, 202);
+  st = await wait('/app-api/edge/1002');
+  assert.equal(st.running, true);
+  assert.deepEqual(st.ports, [{ container: 8090, host: 18010 }]);
+  const logs = await (await call('GET', '/app-api/edge/1002/logs')).json();
+  assert.ok(logs.some((l) => /registered gateway/.test(l.text)), 'credentials survive');
+  assert.equal((await call('POST', '/app-api/edge/1002/update')).status, 202);
+  st = await wait('/app-api/edge/1002');
+  assert.deepEqual(st.ports, [{ container: 8090, host: 18010 }]);
+
+  // another installation cannot take the same host port
+  st = await (await call('GET', '/app-api/edge/1001')).json();
+  assert.deepEqual(st.portRange.used, [18010]);
+  assert.equal((await call('PUT', '/app-api/edge/1001/ports', { ports: [{ container: 8090, host: 18010 }] })).status, 409);
+
+  // a port taken by something else on the server: the edge client is back with the ports it had
+  assert.equal((await call('PUT', '/app-api/edge/1002/ports', { ports: [{ container: 8090, host: 18099 }] })).status, 202);
+  for (let i = 0; i < 100 && !st.job?.error; i++) {
+    st = await (await call('GET', '/app-api/edge/1002')).json();
+    if (!st.job?.running && !st.job?.error) break;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  assert.match(st.job?.error || '', /Port 18099 används redan/);
+  st = await wait('/app-api/edge/1002');
+  assert.equal(st.running, true);
+  assert.deepEqual(st.ports, [{ container: 8090, host: 18010 }]);
+
+  // none again
+  assert.equal((await call('PUT', '/app-api/edge/1002/ports', { ports: [] })).status, 202);
+  st = await wait('/app-api/edge/1002');
+  assert.deepEqual(st.ports, []);
+
+  for (const iid of created) await call('DELETE', `/app-api/edge/${iid}?config=true`);
+  s.server.close();
+});
+
+test('ports cannot be published without EDGE_PORT_RANGE', async () => {
+  const s = await start(envFor());
+  try {
+    const r = await fetch(s.url + '/app-api/edge/1002/ports', { method: 'PUT', headers: { 'X-API-Key': KEY }, body: JSON.stringify({ ports: [] }) });
+    assert.equal(r.status, 400);
+    assert.match((await r.json()).message, /EDGE_PORT_RANGE/);
+  } finally {
+    s.server.close();
+  }
+});

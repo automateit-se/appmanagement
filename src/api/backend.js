@@ -67,5 +67,6 @@ export const backend = {
   edgeCreate: (iid, replaceOnline = false) => call(`edge/${iid}`, { method: 'POST', body: { confirm: true, replaceOnline } }),
   edgeRenew: (iid) => call(`edge/${iid}/credentials`, { method: 'POST', body: { confirm: true } }),
   edgeAction: (iid, action) => call(`edge/${iid}/${action}`, { method: 'POST', body: {} }),
+  edgePorts: (iid, ports) => call(`edge/${iid}/ports`, { method: 'PUT', body: { ports } }),
   edgeRemove: (iid, removeConfig) => call(`edge/${iid}?config=${removeConfig ? 'true' : 'false'}`, { method: 'DELETE' }),
 };

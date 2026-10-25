@@ -75,6 +75,18 @@ export function loadConfig(env = process.env) {
   const edgeNetwork = String(env.EDGE_CLIENT_NETWORK || '');
   if (edgeNetwork && !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(edgeNetwork)) throw new ConfigError(`EDGE_CLIENT_NETWORK='${edgeNetwork}' is not a network name`);
 
+  // EDGE_PORT_RANGE "18000-18099": host ports an edge app's port may be published on (empty = no publishing)
+  let edgePorts = null;
+  const range = String(env.EDGE_PORT_RANGE || '').trim();
+  if (range) {
+    const r = /^(\d{4,5})\s*-\s*(\d{4,5})$/.exec(range);
+    const [from, to] = r ? [Number(r[1]), Number(r[2])] : [];
+    if (!r || from < 1024 || to > 65535 || from > to) throw new ConfigError(`EDGE_PORT_RANGE='${range}' rejected: use e.g. 18000-18099 (1024-65535)`);
+    const bind = String(env.EDGE_PORT_BIND || '0.0.0.0').trim();
+    if (!/^(\d{1,3}(\.\d{1,3}){3}|[0-9a-fA-F:]+)$/.test(bind)) throw new ConfigError(`EDGE_PORT_BIND='${bind}' is not an IP address`);
+    edgePorts = { from, to, bind };
+  }
+
   const realIpHeader = String(env.REAL_IP_HEADER || '').toLowerCase();
   if (realIpHeader && !/^[a-z0-9-]+$/.test(realIpHeader)) throw new ConfigError(`REAL_IP_HEADER='${realIpHeader}' is not a header name`);
 
@@ -104,6 +116,7 @@ export function loadConfig(env = process.env) {
       // an extra IoT Open role permission needed to manage edge clients on this server (none when empty)
       permission: (env.EDGE_PERMISSION || '').trim(),
       admins: list(env.EDGE_ADMINS).map((s) => s.toLowerCase().replace(/^\*@/, '@')),
+      ports: edgePorts,
     },
   };
 }

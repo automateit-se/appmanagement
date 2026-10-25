@@ -74,6 +74,8 @@ Releases and how to publish one: [docs/releases](docs/releases/README.md).
 | `DOCKER_HOST`             | *(empty = edge clients off)*          | `tcp://docker-proxy:2375` (recommended) or `unix:///var/run/docker.sock` |
 | `EDGE_CLIENT_IMAGE`       | `ghcr.io/iotopen/edge-client:latest`  | Image for new edge clients and updates |
 | `EDGE_CLIENT_NETWORK`     | *(empty = Docker's default)*          | Docker network for edge client containers, created on first use (bridge, outbound only). `deploy/compose.yml` uses `iotopen-edge` |
+| `EDGE_PORT_RANGE`         | *(empty = off)*                       | Host ports an app's port in an edge client may be published on, e.g. `18000-18099` (see *Published ports*) |
+| `EDGE_PORT_BIND`          | `0.0.0.0`                             | Address published ports listen on. `0.0.0.0` = every network of the host; an address of one network card limits them to that network |
 | `EDGE_PERMISSION`         | *(empty)*                             | Optional extra restriction on this server: only users whose IoT Open role has this permission may set up new edge clients (start new containers). Looking at, starting, stopping, updating and removing them still follows the role. Give the permission to a dedicated role in IoT Open. Matched as is, as `/all` or `/assigned`, or through a wildcard in the role (`external/example/*`) |
 | `EDGE_ADMINS`             | *(empty)*                             | Optional extra restriction on this server: only these IoT Open users may set up new edge clients, on top of their IoT Open role. Comma-separated e-mail addresses, user ids or e-mail domains (`@example.com`) |
 | `REAL_IP_HEADER`          | *(empty)*                             | Header with the client address set by a trusted reverse proxy, e.g. `cf-connecting-ip`, for the sign-in rate limit |
@@ -156,7 +158,7 @@ end
 *Edge client → Set up edge client* (*Edge client → Sätt upp edge client*):
 
 1. pulls `EDGE_CLIENT_IMAGE` (a copy the host already has is used if the registry cannot be reached),
-2. creates the volume `iotopen-edge-<installation>-config`,
+2. creates the volumes `iotopen-edge-<installation>-config` (`/etc/iot-open`) and `iotopen-edge-<installation>-data` (`/var/lib/iot-open`, the apps' own data, e.g. the local dashboard's cache),
 3. creates new gateway credentials in IoT Open (`POST /api/v2/gateway/credentials/{installation}`) as the signed-in user and writes the answer as `/etc/iot-open/iotopen.json` (mode 0600) into that volume. The password never reaches the browser.
 4. starts the container `iotopen-edge-<installation>` (`HEADLESS=true`, restart `unless-stopped`, 256 MB memory, log rotation).
 
@@ -172,11 +174,20 @@ The edge status is also shown for the edge client App Management runs (*In IoT O
 | Action | What it does |
 |---|---|
 | Stop / Start / Restart (*Stoppa / Starta / Starta om*) | The container |
-| Update (*Uppdatera*) | Pulls the image again and recreates the container with the same volume (credentials are kept) |
+| Update (*Uppdatera*) | Pulls the image again and recreates the container with the same volumes and published ports (credentials and app data are kept) |
 | New credentials (*Nya credentials*) | New credentials from IoT Open into the volume, then a restart |
-| Remove (*Ta bort*) | Removes the container, and optionally the volume with the credentials |
+| Remove (*Ta bort*) | Removes the container, and optionally the volumes with the credentials and the apps' data |
 
 The status shows the container state, start time, restarts, memory use against the container's limit, how many apps run and how many of the last 300 log lines look like errors. The log can be followed live and filtered to errors only.
+
+### Published ports
+
+An app in the edge client can have its own web page, e.g. the edge app [Lokal dashboard](https://github.com/automateit-se/edge-app-local-dashboard) on port 8090. In Docker that port is only reachable inside the container until it is published on a port of the server. With `EDGE_PORT_RANGE` set, *Publicerade portar* on the edge client's page lists the published ports with a link, and *Ändra portar* sets them: the app's port (1024-65535, not the broker's 1883/8883/9001) and the server's port (in the range, suggested as the next free one). At most five per edge client.
+
+- Docker cannot change the ports of a container, so it is recreated with the same volumes and image (a short restart of the apps). The ports are kept in a label on the container, so an update keeps them too.
+- A server port can only be used by one edge client. When it turns out to be taken by something else on the server, the edge client is started again with the ports it had and the page says which port was taken.
+- Publishing opens the server to the network, so it follows the same rules as setting up an edge client here (`EDGE_PERMISSION`, `EDGE_ADMINS`). Others only see the ports.
+- The apps answer on plain http. Publish only on a network you trust: set `EDGE_PORT_BIND` to the address of the local network card, or keep the range closed in the server's firewall. With `EDGE_CLIENT_NETWORK=host` nothing needs publishing.
 
 When the installation's edge client runs somewhere else (a gateway, a Raspberry Pi, another server), the page says so, with its edge status in IoT Open: App Management can only show status, logs and app health for edge clients it runs itself.
 

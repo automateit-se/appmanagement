@@ -160,6 +160,12 @@ export function createApp(cfg, opts = {}) {
         if (['start', 'stop', 'restart'].includes(sub)) return sendJson(res, 200, await exclusive(iid, () => edge.action(iid, sub)));
         if (sub === 'update') return sendJson(res, 202, await exclusive(iid, () => edge.update(iid, user)));
       }
+      if (req.method === 'PUT' && sub === 'ports') {
+        // a published port opens the server to the network: the same rules as setting up an edge client here
+        requireAccess(a, a.createEdge, 'publicera portar på den här servern');
+        const body = await readJson(req);
+        return sendJson(res, 202, await exclusive(iid, () => edge.setPorts(iid, user, body.ports)));
+      }
       throw new HttpError(404, 'Hittades inte');
     }
     throw new HttpError(404, 'Hittades inte');

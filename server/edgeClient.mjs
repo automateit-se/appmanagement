@@ -19,6 +19,47 @@ const APP_LOG_LINES = 3000;
 
 export const containerName = (iid) => `iotopen-edge-${Number(iid)}`;
 export const volumeName = (iid) => `iotopen-edge-${Number(iid)}-config`;
+// the apps' own data (/var/lib/iot-open), e.g. the local dashboard's cache, kept when the container is recreated
+export const dataVolumeName = (iid) => `iotopen-edge-${Number(iid)}-data`;
+
+// Published ports: an app in the edge client (e.g. the local dashboard on 8090) reached on a port of this server.
+// Kept in a label on the container ("8090:18010,8091:18011"), so an update recreates the container with them.
+const PORTS_LABEL = `${L}.ports`;
+const MAX_PORTS = 5;
+// the edge client's own broker and web server are never published
+const RESERVED = new Set([1883, 8883, 9001]);
+
+/** "8090:18010,…" -> [{ container: 8090, host: 18010 }, …] */
+export function parsePorts(label) {
+  return String(label || '')
+    .split(',')
+    .map((p) => /^(\d+):(\d+)$/.exec(p.trim()))
+    .filter(Boolean)
+    .map((m) => ({ container: Number(m[1]), host: Number(m[2]) }));
+}
+
+/**
+ * Checks the ports asked for: whole numbers, an app port of 1024 or above (not the broker), a host port in the
+ * range and not used by another edge client. Returns them sorted, or throws a 400 that says what is wrong.
+ */
+export function checkPorts(list, range, usedElsewhere = new Set()) {
+  if (!Array.isArray(list)) throw new HttpError(400, 'ports ska vara en lista');
+  if (list.length > MAX_PORTS) throw new HttpError(400, `Högst ${MAX_PORTS} portar`);
+  const out = [];
+  for (const p of list) {
+    const container = Number(p?.container);
+    const host = Number(p?.host);
+    if (!Number.isInteger(container) || container < 1024 || container > 65535 || RESERVED.has(container)) {
+      throw new HttpError(400, `Appens port ${p?.container ?? ''} går inte att publicera: använd 1024-65535, inte ${[...RESERVED].join('/')}`);
+    }
+    if (!Number.isInteger(host) || host < range.from || host > range.to) throw new HttpError(400, `Serverns port ${p?.host ?? ''} ligger utanför ${range.from}-${range.to}`);
+    if (usedElsewhere.has(host)) throw new HttpError(409, `Port ${host} används redan av en annan edge client`);
+    if (out.some((o) => o.host === host)) throw new HttpError(400, `Port ${host} finns två gånger`);
+    if (out.some((o) => o.container === container)) throw new HttpError(400, `Appens port ${container} finns två gånger`);
+    out.push({ container, host });
+  }
+  return out.sort((a, b) => a.host - b.host);
+}
 
 export function edgeClients(cfg, docker, lynx) {
   const lynxHost = new URL(cfg.lynxUrl).host;
@@ -61,16 +102,24 @@ export function edgeClients(cfg, docker, lynx) {
     });
   }
 
-  async function createContainer(iid, user) {
+  async function createContainer(iid, user, ports = []) {
     await ensureNetwork();
+    // created with labels like the config volume (Docker would otherwise create it without them); kept if it exists
+    await docker.json('POST', '/volumes/create', { body: { Name: dataVolumeName(iid), Labels: labels(iid, user) } });
+    const published = cfg.edge.ports ? ports : [];
     const body = {
       Image: cfg.edge.image,
       Env: ['HEADLESS=true'],
-      Labels: labels(iid, user),
+      Labels: { ...labels(iid, user), ...(published.length ? { [PORTS_LABEL]: published.map((p) => `${p.container}:${p.host}`).join(',') } : {}) },
+      ExposedPorts: Object.fromEntries(published.map((p) => [`${p.container}/tcp`, {}])),
       HostConfig: {
         RestartPolicy: { Name: 'unless-stopped' },
         // the image's /etc/iot-open (mosquitto template) is copied into the new volume, iotopen.json is added
-        Mounts: [{ Type: 'volume', Source: volumeName(iid), Target: '/etc/iot-open' }],
+        Mounts: [
+          { Type: 'volume', Source: volumeName(iid), Target: '/etc/iot-open' },
+          { Type: 'volume', Source: dataVolumeName(iid), Target: '/var/lib/iot-open' },
+        ],
+        PortBindings: Object.fromEntries(published.map((p) => [`${p.container}/tcp`, [{ HostIp: cfg.edge.ports.bind, HostPort: String(p.host) }]])),
         LogConfig: { Type: 'json-file', Config: { 'max-size': '10m', 'max-file': '3' } },
         Memory: 256 * 1024 * 1024,
         ...(cfg.edge.network ? { NetworkMode: cfg.edge.network } : {}),
@@ -160,9 +209,32 @@ export function edgeClients(cfg, docker, lynx) {
       recentErrors: errors.length,
       lastError: errors.length ? errors[errors.length - 1] : null,
       hasConfig: !!(info.Mounts || []).find((m) => m.Destination === '/etc/iot-open'),
+      ports: parsePorts(c.Labels?.[PORTS_LABEL]),
+      portRange: cfg.edge.ports ? { from: cfg.edge.ports.from, to: cfg.edge.ports.to, used: [...(await usedPorts(iid))].sort((a, b) => a - b) } : null,
       job,
     };
   }
+
+  /** Host ports published by the edge clients of other installations (any IoT Open server) on this Docker host. */
+  async function usedPorts(iid) {
+    const list = await docker.json('GET', '/containers/json', { query: { all: 'true', filters: { label: [`${L}.role=edge-client`] } } });
+    const used = new Set();
+    for (const c of list || []) {
+      if (c.Labels?.[`${L}.installation`] === String(Number(iid)) && c.Labels?.[`${L}.lynx`] === lynxHost) continue;
+      for (const p of parsePorts(c.Labels?.[PORTS_LABEL])) used.add(p.host);
+    }
+    return used;
+  }
+
+  /** Recreates the container with the same volumes, ports and image; started again when it was running. */
+  async function recreate(iid, user, oldId, ports) {
+    await docker.json('DELETE', `/containers/${oldId}`, { query: { force: 'true' } });
+    const id = await createContainer(iid, user, ports);
+    await docker.json('POST', `/containers/${id}/start`);
+    return id;
+  }
+
+  const portTaken = (e) => /port is already allocated|address already in use|bind for/i.test(String(e?.message || ''));
 
   return {
     enabled: true,
@@ -221,6 +293,7 @@ export function edgeClients(cfg, docker, lynx) {
           // nothing half-made is left behind, in particular no volume holding credentials
           await docker.json('DELETE', `/containers/${id}`, { query: { force: 'true' } }).catch(() => {});
           await docker.json('DELETE', `/volumes/${volumeName(iid)}`).catch(() => {});
+          await docker.json('DELETE', `/volumes/${dataVolumeName(iid)}`).catch(() => {});
           throw e;
         }
       });
@@ -254,9 +327,36 @@ export function edgeClients(cfg, docker, lynx) {
         step('Hämtar senaste versionen…');
         await pullImage();
         step('Startar om med den nya versionen…');
-        await docker.json('DELETE', `/containers/${c.Id}`, { query: { force: 'true' } });
-        const id = await createContainer(iid, user);
-        await docker.json('POST', `/containers/${id}/start`);
+        await recreate(iid, user, c.Id, parsePorts(c.Labels?.[PORTS_LABEL]));
+      });
+      return { ...before, job: { action: job.action, step: job.step, error: '', running: true, started: job.started } };
+    },
+
+    /**
+     * Publishes app ports on this server (EDGE_PORT_RANGE), replacing the ones before; [] = none. Docker cannot
+     * change the ports of a container, so it is recreated (a job). When a port turns out to be taken by something
+     * else on the server, the edge client is started again with the ports it had.
+     */
+    async setPorts(iid, user, list) {
+      if (!cfg.edge.ports) throw new HttpError(400, 'Portpublicering är inte aktiverad på servern (EDGE_PORT_RANGE)');
+      if (cfg.edge.network === 'host') throw new HttpError(400, 'Edge clienterna kör i värdens nätverk (EDGE_CLIENT_NETWORK=host): appens port nås redan direkt');
+      const c = await must(iid);
+      const ports = checkPorts(list, cfg.edge.ports, await usedPorts(iid));
+      const old = parsePorts(c.Labels?.[PORTS_LABEL]);
+      const before = await status(iid);
+      const job = runJob(iid, 'ports', async (step) => {
+        step('Startar om edge clienten med de nya portarna…');
+        try {
+          await recreate(iid, user, c.Id, ports);
+        } catch (e) {
+          if (!portTaken(e)) throw e;
+          step('Porten var upptagen, startar med de tidigare portarna…');
+          const cur = await find(iid);
+          if (cur) await recreate(iid, user, cur.Id, old);
+          else await docker.json('POST', `/containers/${await createContainer(iid, user, old)}/start`);
+          const port = /:(\d+) failed/.exec(e.message)?.[1];
+          throw new HttpError(409, `${port ? `Port ${port}` : 'En av portarna'} används redan av något annat på servern. Edge clienten kör med de tidigare portarna.`);
+        }
       });
       return { ...before, job: { action: job.action, step: job.step, error: '', running: true, started: job.started } };
     },
@@ -266,7 +366,9 @@ export function edgeClients(cfg, docker, lynx) {
       jobs.delete(iid);
       const c = await must(iid);
       await docker.json('DELETE', `/containers/${c.Id}`, { query: { force: 'true' } });
-      if (removeConfig) await docker.json('DELETE', `/volumes/${volumeName(iid)}`).catch((e) => (e.status === 404 ? null : Promise.reject(e)));
+      if (removeConfig) {
+        for (const v of [volumeName(iid), dataVolumeName(iid)]) await docker.json('DELETE', `/volumes/${v}`).catch((e) => (e.status === 404 ? null : Promise.reject(e)));
+      }
       return { exists: false, image: cfg.edge.image };
     },
   };
