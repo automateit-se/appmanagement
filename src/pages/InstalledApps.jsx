@@ -3,7 +3,7 @@ import { lynx } from '../api/lynx.js';
 import { backend } from '../api/backend.js';
 import { config } from '../api/config.js';
 import { onDefaultServer } from '../api/server.js';
-import { isNewerVersion } from '../../shared/version.js';
+import { isCommitVersion, isNewerVersion } from '../../shared/version.js';
 import { githubRepo, latestVersion } from '../lib/install.js';
 import { Icon } from '../components/icons.jsx';
 import { Confirm, errText } from '../components/Modal.jsx';
@@ -101,11 +101,21 @@ export default function InstalledApps({ installation, access }) {
       const ids = [...new Set(list.map((i) => i.app_id))];
       const apps = Object.fromEntries(await Promise.all(ids.map(async (id) => [id, await lynx.edgeApp(id).catch(() => null)])));
       const latest = Object.fromEntries(await Promise.all(ids.map(async (id) => [id, apps[id] ? await latestFor(apps[id], installation.organization_id) : null])));
-      setRows(
-        list
-          .map((inst) => ({ inst, app: apps[inst.app_id], latest: latest[inst.app_id] }))
-          .sort((a, b) => String(a.inst.name).localeCompare(String(b.inst.name), 'sv')),
+      const rows = list
+        .map((inst) => ({ inst, app: apps[inst.app_id], latest: latest[inst.app_id] }))
+        .sort((a, b) => String(a.inst.name).localeCompare(String(b.inst.name), 'sv'));
+      // installed from a commit, then released with the same code: IoT Open keeps it under the commit's name,
+      // so the release is no update
+      await Promise.all(
+        rows.map(async (row) => {
+          const { inst, latest: l } = row;
+          if (!l?.github || !isCommitVersion(inst.version) || isCommitVersion(l.version)) return;
+          if (!isNewerVersion(l.version, inst.version)) return;
+          const sha = String(inst.version).split('-').pop();
+          row.sameCode = await backend.sameCode(l.github.owner, l.github.repo, l.github.tag, sha).then((r) => !!r?.same, () => false);
+        }),
       );
+      setRows(rows);
     } catch (e) {
       setError(errText(e));
       setRows([]);
@@ -147,8 +157,8 @@ export default function InstalledApps({ installation, access }) {
         </div>
       )}
       <div className="cards">
-        {rows?.map(({ inst, app, latest }) => {
-          const update = isNewerVersion(latest?.version, inst.version, { headCommit: latest?.headCommit });
+        {rows?.map(({ inst, app, latest, sameCode }) => {
+          const update = !sameCode && isNewerVersion(latest?.version, inst.version, { headCommit: latest?.headCommit });
           return (
             <article key={inst.id} className="card">
               <header className="card-head">

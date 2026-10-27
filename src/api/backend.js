@@ -21,6 +21,7 @@ export const backend = {
   repo: (owner, repo) => call(`catalog/${seg(owner)}/${seg(repo)}`),
   /** app.json, app.lua and description of one version, ready to be handed to IoT Open. */
   package: (owner, repo, tag) => call(`catalog/${seg(owner)}/${seg(repo)}/package?tag=${seg(tag)}`),
+  sameCode: (owner, repo, tag, commit) => call(`catalog/${seg(owner)}/${seg(repo)}/same?tag=${seg(tag)}&commit=${seg(commit)}`),
 
   /** What the user may do on the installation, from the user's role in IoT Open. */
   access: (iid) => call(`access/${iid}`),

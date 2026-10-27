@@ -75,6 +75,9 @@ export function createApp(cfg, opts = {}) {
       if (p === '/app-api/catalog') return sendJson(res, 200, await github.catalog());
       if ((m = /^\/app-api\/catalog\/([^/]+)\/([^/]+)$/.exec(p))) return sendJson(res, 200, await github.details(m[1], m[2]));
       if ((m = /^\/app-api\/catalog\/([^/]+)\/([^/]+)\/package$/.exec(p))) return sendJson(res, 200, await github.package(m[1], m[2], url.searchParams.get('tag')));
+      if ((m = /^\/app-api\/catalog\/([^/]+)\/([^/]+)\/same$/.exec(p))) {
+        return sendJson(res, 200, await github.sameCode(m[1], m[2], url.searchParams.get('tag'), url.searchParams.get('commit')));
+      }
       throw new HttpError(404, 'Hittades inte');
     }
 
