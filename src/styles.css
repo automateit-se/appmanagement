@@ -281,7 +281,12 @@ select.compact { width: auto; padding: 4px 8px; font-size: 13px; }
 .markdown h3, .markdown h4, .markdown h5, .markdown h6 { margin: 16px 0 6px; color: var(--heading); }
 .markdown h3 { font-size: 17px; }
 .markdown p { margin: 0 0 10px; }
-.markdown ul { margin: 0 0 10px; padding-left: 22px; }
+.markdown ul, .markdown ol { margin: 0 0 10px; padding-left: 22px; }
+.markdown li { margin: 2px 0; }
+.markdown .md-table { overflow-x: auto; margin: 0 0 12px; }
+.markdown table { border-collapse: collapse; font-size: 0.95em; }
+.markdown th, .markdown td { border: 1px solid var(--border); padding: 5px 9px; text-align: left; vertical-align: top; overflow-wrap: normal; }
+.markdown th { background: var(--surface-2); font-weight: 600; }
 .markdown pre { background: var(--surface-2); padding: 10px 12px; border-radius: 8px; overflow: auto; }
 .notes { margin: 0 0 12px; }
 .notes summary { cursor: pointer; font-weight: 600; font-size: 14px; margin-bottom: 6px; }
