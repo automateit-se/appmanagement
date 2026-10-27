@@ -3,7 +3,7 @@ import { lynx } from '../api/lynx.js';
 import { backend } from '../api/backend.js';
 import { config } from '../api/config.js';
 import { onDefaultServer } from '../api/server.js';
-import { compareVersions } from '../../shared/version.js';
+import { isNewerVersion } from '../../shared/version.js';
 import { githubRepo, latestVersion } from '../lib/install.js';
 import { Icon } from '../components/icons.jsx';
 import { Confirm, errText } from '../components/Modal.jsx';
@@ -23,7 +23,9 @@ async function latestFor(app, orgId) {
     try {
       const d = await backend.repo(gh.owner, gh.repo);
       const v = d.versions?.[0];
-      return v ? { version: v.name, github: { owner: d.owner, repo: d.repo, tag: v.tag }, source: 'github', url: d.url } : { source: 'github', url: d.url };
+      return v
+        ? { version: v.name, github: { owner: d.owner, repo: d.repo, tag: v.tag }, source: 'github', url: d.url, headCommit: !!v.unreleased }
+        : { source: 'github', url: d.url };
     } catch {
       return { source: 'github', url: app.source_url, unreachable: true };
     }
@@ -146,7 +148,7 @@ export default function InstalledApps({ installation, access }) {
       )}
       <div className="cards">
         {rows?.map(({ inst, app, latest }) => {
-          const update = latest?.version && compareVersions(latest.version, inst.version) > 0;
+          const update = isNewerVersion(latest?.version, inst.version, { headCommit: latest?.headCommit });
           return (
             <article key={inst.id} className="card">
               <header className="card-head">
