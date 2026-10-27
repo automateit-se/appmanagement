@@ -108,7 +108,7 @@ test('rate limits sign-in attempts', async () => {
 
 test('catalog from GitHub', async () => {
   const list = await (await get('/app-api/catalog', null)).json();
-  assert.deepEqual(list.map((r) => r.id).sort(), ['example-org/broken-app', 'example-org/energy-report', 'example-org/light-control', 'example-org/temperature-alarm', 'example-org/value-logger', 'example-vendor/edge-app-door-counter']);
+  assert.deepEqual(list.map((r) => r.id).sort(), ['example-org/broken-app', 'example-org/broker-tuning', 'example-org/energy-report', 'example-org/light-control', 'example-org/temperature-alarm', 'example-org/value-logger', 'example-vendor/edge-app-door-counter']);
   assert.ok(!list[0].topics.includes('iotopen-edge-app'));
 
   const d = await (await get('/app-api/catalog/example-org/temperature-alarm')).json();
@@ -155,6 +155,17 @@ test('IoT Open style repository: no topic, no releases, edge-app.json', async ()
     source_url: 'https://github.com/example-vendor/edge-app-door-counter',
   });
   assert.equal((await get('/app-api/catalog/example-vendor/not-an-app')).status, 404);
+});
+
+test('a release with the code of an installed commit is no update', async () => {
+  const same = await (await get('/app-api/catalog/example-org/broker-tuning/same?tag=v0.1.0&commit=2562ba3')).json();
+  assert.deepEqual(same, { same: true });
+  const changed = await (await get('/app-api/catalog/example-org/broker-tuning/same?tag=v0.1.0&commit=f331424')).json();
+  assert.deepEqual(changed, { same: false });
+  const unknown = await (await get('/app-api/catalog/example-org/broker-tuning/same?tag=v0.1.0&commit=0000000')).json();
+  assert.deepEqual(unknown, { same: false });
+  assert.equal((await get('/app-api/catalog/example-org/broker-tuning/same?tag=v0.1.0&commit=../x')).status, 400);
+  assert.equal((await get('/app-api/catalog/example-org/broker-tuning/same?tag=v9.9.9&commit=2562ba3')).status, 404);
 });
 
 test('GITHUB_OWNERS limits the catalog, GITHUB_INCLUDE is always listed', async () => {

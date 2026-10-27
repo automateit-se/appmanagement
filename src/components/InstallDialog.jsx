@@ -30,16 +30,17 @@ export function InstallDialog({ installation, job, onClose, onDone }) {
     (async () => {
       let app = job.app;
       let version = job.version || job.instance?.version;
+      let sameAs = null;
       if (job.github) {
         setStep('Hämtar appen från GitHub…');
         const pkg = await backend.package(job.github.owner, job.github.repo, job.github.tag);
         if (!alive) return;
-        ({ app, version } = await ensureGithubVersion(lynx, { orgId: installation.organization_id, pkg, onStep: (s) => alive && setStep(s) }));
+        ({ app, version, sameAs } = await ensureGithubVersion(lynx, { orgId: installation.organization_id, pkg, onStep: (s) => alive && setStep(s) }));
       }
       setStep('Läser appens inställningar…');
       const options = (await lynx.edgeAppOptions(app.id, version)) || {};
       if (!alive) return;
-      setReady({ app, version, options });
+      setReady({ app, version, options, sameAs });
       setValues(initialValues(options, job.instance?.config));
       setName(job.instance?.name || app.name || '');
     })().catch((e) => alive && setError(errText(e)));
@@ -81,7 +82,9 @@ export function InstallDialog({ installation, job, onClose, onDone }) {
 
   const title =
     job.mode === 'install' ? `Installera ${job.title || ready?.app?.name || ''}` : job.mode === 'update' ? `Uppdatera ${job.instance.name}` : `Inställningar för ${job.instance.name}`;
-  const action = job.mode === 'install' ? 'Installera' : job.mode === 'update' ? `Uppdatera till ${ready?.version || ''}` : 'Spara';
+  // a GitHub release whose code IoT Open already has under the installed version's name: nothing to update
+  const noChange = job.mode === 'update' && !!ready && ready.version === job.instance.version;
+  const action = job.mode === 'install' ? 'Installera' : job.mode === 'update' && !noChange ? `Uppdatera till ${ready?.version || ''}` : 'Spara';
 
   return (
     <Modal
@@ -125,7 +128,12 @@ export function InstallDialog({ installation, job, onClose, onDone }) {
       )}
       {ready && (
         <>
-          {job.mode === 'update' && (
+          {job.mode === 'update' && noChange && (
+            <div className="info-box">
+              Version <strong>{ready.sameAs || job.github?.tag}</strong> har samma kod som den installerade <strong>{ready.version}</strong>, så det finns inget att uppdatera. Du kan ändra och spara inställningarna här.
+            </div>
+          )}
+          {job.mode === 'update' && !noChange && (
             <div className="info-box">
               Från version <strong>{job.instance.version}</strong> till <strong>{ready.version}</strong>. Nuvarande inställningar följer med; kontrollera nya fält innan du uppdaterar.
             </div>

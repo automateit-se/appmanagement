@@ -233,6 +233,17 @@ const repos = {
       },
     },
   },
+  // Installed from commits first, then released: v0.1.0 has the code of commit 2562ba3 (only a changelog was added).
+  'example-org/broker-tuning': {
+    description: 'Sets the broker queue',
+    topics: ['iotopen-edge-app', 'mqtt'],
+    readme: '# Broker tuning\n',
+    commits: {
+      f331424aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: { json: { input: {}, guide: [] }, lua: '-- broker tuning\nreturn M\n' },
+      '2562ba3bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb': { json: { input: {}, guide: [] }, lua: '-- broker tuning\n' },
+    },
+    releases: { 'v0.1.0': { json: { input: {}, guide: [] }, lua: '-- broker tuning\n', at: '2026-10-27T17:00:00Z', notes: 'First version.' } },
+  },
   'example-org/value-logger': {
     description: 'Logs values to a file',
     topics: ['iotopen-edge-app', 'logger'],
@@ -292,6 +303,7 @@ const ghRepo = (full) => {
 /** Files of a repository at a ref: a release tag, the default branch or the head commit. */
 function filesAt(r, ref) {
   if (r.releases[ref]) return { ...r.releases[ref], manifest: r.manifest };
+  if (r.commits?.[ref]) return { ...r.commits[ref], manifest: r.manifest };
   if (ref === (r.defaultBranch || 'main') || ref === r.head?.sha) {
     if (r.branchFiles) return { ...r.branchFiles, manifest: r.manifest };
     const last = Object.values(r.releases).at(-1);
@@ -633,7 +645,10 @@ function githubApi(req, res, p, url) {
   }
   if ((m = /^\/github-api\/repos\/([^/]+)\/([^/]+)\/commits\/([^/]+)$/.exec(p))) {
     const r = repos[`${m[1]}/${m[2]}`];
-    if (!r || decodeURIComponent(m[3]) !== (r.defaultBranch || 'main')) return send(res, 404, { message: 'Not Found' });
+    const ref = decodeURIComponent(m[3]);
+    const sha = r?.commits && Object.keys(r.commits).find((k) => k.startsWith(ref.toLowerCase()) && ref.length >= 7);
+    if (sha) return send(res, 200, { sha, commit: { message: '', committer: { date: '2026-10-27T16:00:00Z' } } });
+    if (!r || ref !== (r.defaultBranch || 'main')) return send(res, 404, { message: 'Not Found' });
     const h = r.head || { sha: 'f'.repeat(40), date: '2026-09-15T10:00:00Z', message: '' };
     return send(res, 200, { sha: h.sha, commit: { message: h.message, committer: { date: h.date } } });
   }

@@ -17,6 +17,7 @@ import { sortVersionsDesc, versionName } from '../shared/version.js';
 const NAME = /^[A-Za-z0-9-]{1,39}$/;
 const REPO = /^[A-Za-z0-9._-]{1,100}$/;
 const TAG = /^[A-Za-z0-9._\/-]{1,100}$/;
+const SHA = /^[0-9a-f]{7,40}$/i;
 const MAX_FILE = 512 * 1024;
 const MAX_README = 20000;
 const MANIFESTS = ['edge-app.json', 'edge_app.json'];
@@ -126,6 +127,7 @@ export function githubClient(cfg) {
   const listCache = ttlCache(5 * 60_000, 10);
   const detailCache = ttlCache(5 * 60_000, 200);
   const packageCache = ttlCache(60 * 60_000, 200);
+  const sameCache = ttlCache(60 * 60_000, 200);
 
   /** Map with limited concurrency (GitHub does not like bursts). */
   async function mapLimit(list, n, fn) {
@@ -241,5 +243,25 @@ export function githubClient(cfg) {
     });
   }
 
-  return { catalog, details, package: pkg };
+  /**
+   * Whether the version ``tag`` has the same app.json and app.lua as the commit ``commit`` (a short or full sha).
+   * An app installed from a commit (version "commit-20261027-2562ba3") and later released without changing its code
+   * gets nothing new from the release: IoT Open keeps the code under the commit's name, so it is no update.
+   */
+  async function sameCode(owner, repo, tag, commit) {
+    if (!SHA.test(String(commit || ''))) throw new HttpError(400, 'Ogiltig commit');
+    const p = await pkg(owner, repo, tag);
+    const d = await details(owner, repo);
+    return sameCache(`${p.id}@${tag}#${commit}`.toLowerCase(), async () => {
+      const c = await get(`${gh.apiUrl}/repos/${d.owner}/${d.repo}/commits/${encodeURIComponent(commit)}`, { optional: true });
+      if (!c?.sha || !SHA.test(c.sha)) return { same: false };
+      const [appJson, appLua] = await Promise.all([
+        get(raw(d.owner, d.repo, c.sha, 'app.json'), { raw: true, optional: true }),
+        get(raw(d.owner, d.repo, c.sha, 'app.lua'), { raw: true, optional: true }),
+      ]);
+      return { same: appJson !== null && appLua !== null && appJson === p.appJson && appLua === p.appLua };
+    });
+  }
+
+  return { catalog, details, package: pkg, sameCode };
 }
