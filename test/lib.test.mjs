@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { compareVersions, sortVersionsDesc, versionName } from '../shared/version.js';
+import { compareVersions, isCommitVersion, isNewerVersion, sortVersionsDesc, versionName } from '../shared/version.js';
 import { cleanValues, formLayout, initialValues, inputKind, matchesFilter, validate } from '../src/lib/configForm.js';
 import { ensureGithubVersion, githubRepo, latestVersion, normUrl } from '../src/lib/install.js';
 import { demuxLogs, splitImage } from '../server/docker.mjs';
@@ -19,6 +19,26 @@ test('version names and ordering', () => {
   assert.ok(compareVersions('1.0', '1.0.1') < 0);
   assert.equal(compareVersions('1.2.3', 'v1.2.3'), 0);
   assert.deepEqual(sortVersionsDesc(['1.0.0', '1.10.0', '1.2.0']), ['1.10.0', '1.2.0', '1.0.0']);
+});
+
+test('updates for apps without releases (commit versions)', () => {
+  const a = 'commit-20261027-f331424';
+  const b = 'commit-20261027-2562ba3';
+  assert.ok(isCommitVersion(a) && !isCommitVersion('0.1.0'));
+  // same day: the hash cannot be ordered, so the head commit on GitHub is newer than any other installed commit
+  assert.equal(isNewerVersion(b, a, { headCommit: true }), true);
+  assert.equal(isNewerVersion(b, a), false); // not known to be the head (e.g. a version list in IoT Open)
+  assert.equal(isNewerVersion(a, a, { headCommit: true }), false);
+  // another day: the date decides
+  assert.equal(isNewerVersion('commit-20261028-0000001', a), true);
+  assert.equal(isNewerVersion(a, 'commit-20261028-0000001', { headCommit: true }), false);
+  // the app got releases: any release replaces a commit, a commit never replaces a release
+  assert.equal(isNewerVersion('0.1.0', a), true);
+  assert.equal(isNewerVersion(a, '0.1.0', { headCommit: true }), false);
+  // releases as before
+  assert.equal(isNewerVersion('0.2.0', '0.1.9'), true);
+  assert.equal(isNewerVersion('0.1.9', '0.1.9'), false);
+  assert.equal(isNewerVersion(undefined, '0.1.9'), false);
 });
 
 const options = {
