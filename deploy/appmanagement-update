@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# Updates App Management on the server to the latest release on GitHub, or to the version given.
+#
+#   sudo appmanagement-update            # the latest release
+#   sudo appmanagement-update 0.1.10     # a given version (also "v0.1.10" or "main")
+#
+# Sets APPMANAGEMENT_TAG in .env, fetches compose.yml of the same version, pulls the image and restarts. Then
+# App Management must answer on /healthz within 60 s, otherwise the previous .env and compose.yml are put back
+# and the previous version is started again.
+#
+# Install:
+#   sudo curl -fsSL -o /usr/local/bin/appmanagement-update \
+#     https://raw.githubusercontent.com/automateit-se/appmanagement/main/deploy/appmanagement-update
+#   sudo chmod +x /usr/local/bin/appmanagement-update
+set -euo pipefail
+
+APP_DIR="${APP_DIR:-/opt/appmanagement}"
+REPO="automateit-se/appmanagement"
+WAIT="${WAIT:-60}"
+
+cd "$APP_DIR"
+if [ ! -f .env ] || [ ! -f compose.yml ]; then
+  echo "Hittar inte .env och compose.yml i $APP_DIR." >&2
+  exit 1
+fi
+
+# the version to install
+want="${1:-}"
+if [ -z "$want" ]; then
+  want="$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
+    | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
+  [ -n "$want" ] || { echo "Kunde inte läsa senaste versionen från GitHub." >&2; exit 1; }
+fi
+want="${want#v}"
+case "$want" in
+  main | [0-9]*.[0-9]*.[0-9]*) ;;
+  *) echo "Ogiltig version: $want (t.ex. 0.1.10 eller main)." >&2; exit 1 ;;
+esac
+ref="v$want"
+[ "$want" = "main" ] && ref="main"
+
+have="$(sed -n 's/^APPMANAGEMENT_TAG=//p' .env | tail -n 1)"
+if [ "$have" = "$want" ] && [ "${FORCE:-0}" != "1" ]; then
+  echo "App Management kör redan $want."
+  exit 0
+fi
+
+echo "Uppdaterar App Management ${have:-?} -> $want"
+cp .env .env.previous
+cp compose.yml compose.yml.previous
+
+restore() {
+  echo "App Management $want svarade inte. Återställer ${have:-föregående version}." >&2
+  cp .env.previous .env
+  cp compose.yml.previous compose.yml
+  docker compose pull --quiet appmanagement || true
+  docker compose up -d --remove-orphans
+  exit 1
+}
+
+# compose.yml of the same version (new settings may need it); keep the current one if it cannot be read
+if curl -fsSL -o compose.yml.new "https://raw.githubusercontent.com/$REPO/$ref/deploy/compose.yml" \
+  && APPMANAGEMENT_TAG="$want" docker compose -f compose.yml.new --env-file .env config --quiet; then
+  mv compose.yml.new compose.yml
+else
+  rm -f compose.yml.new
+  echo "compose.yml för $want kunde inte hämtas eller kontrolleras: behåller den nuvarande." >&2
+fi
+
+if grep -q '^APPMANAGEMENT_TAG=' .env; then
+  sed -i "s/^APPMANAGEMENT_TAG=.*/APPMANAGEMENT_TAG=$want/" .env
+else
+  echo "APPMANAGEMENT_TAG=$want" >> .env
+fi
+
+docker compose pull --quiet appmanagement || restore
+docker compose up -d --remove-orphans || restore
+
+for _ in $(seq 1 "$WAIT"); do
+  if docker compose exec -T appmanagement wget -qO- http://127.0.0.1:8080/healthz > /dev/null 2>&1; then
+    echo "Klart: App Management $want körs."
+    exit 0
+  fi
+  sleep 1
+done
+restore

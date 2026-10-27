@@ -10,4 +10,4 @@ To publish version `x.y.z`:
    - *Release title*: `vx.y.z`.
    - *Description*: the contents of `docs/releases/vx.y.z.md`.
 3. *Publish release*. The tag starts the *container* workflow, which publishes `ghcr.io/automateit-se/appmanagement:x.y.z`, `:x.y` and `:latest` and shows the version at the bottom of the page.
-4. On the server: `APPMANAGEMENT_TAG=x.y.z` in `/opt/appmanagement/.env`, then `sudo docker compose pull && sudo docker compose up -d`.
+4. On the server: `sudo appmanagement-update` (see *Updating* in the README), or by hand `APPMANAGEMENT_TAG=x.y.z` in `/opt/appmanagement/.env`, then `sudo docker compose pull && sudo docker compose up -d`.
