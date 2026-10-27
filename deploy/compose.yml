@@ -6,6 +6,7 @@
 #   sudo nano .env                      # optional settings
 #   sudo docker compose up -d
 #   sudo edge-update                    # publishes appmanagement.<domain> through the edge (sites/appmanagement.conf)
+#   sudo appmanagement-update           # later: update to the latest release (deploy/appmanagement-update)
 #
 # Edge clients are not defined here: App Management starts them as sibling containers through the socket proxy
 # (one iotopen-edge-<installation> per installation) on the network "iotopen-edge", which App Management creates

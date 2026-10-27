@@ -93,6 +93,17 @@ sudo docker compose up -d
 sudo edge-update          # on the edge host: publishes appmanagement.<domain>
 ```
 
+**Updating.** `deploy/appmanagement-update` updates to the latest release, or to a given version. It sets `APPMANAGEMENT_TAG` in `.env`, fetches `compose.yml` of the same version, pulls the image and restarts; if App Management does not answer on `/healthz` within 60 s, the previous `.env` and `compose.yml` are put back.
+
+```bash
+sudo curl -fsSL -o /usr/local/bin/appmanagement-update \
+  https://raw.githubusercontent.com/automateit-se/appmanagement/main/deploy/appmanagement-update
+sudo chmod +x /usr/local/bin/appmanagement-update
+
+sudo appmanagement-update            # the latest release
+sudo appmanagement-update 0.1.10     # a given version
+```
+
 Sign-in is IoT Open's own; nothing else is put in front of it.
 
 ### Who may do what
