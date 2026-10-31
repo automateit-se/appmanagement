@@ -7,7 +7,7 @@ import { demuxLogs, splitImage } from '../server/docker.mjs';
 import { makeTar } from '../server/tar.mjs';
 import { checkPorts, parsePorts } from '../server/edgeClient.mjs';
 import { checkOrigin, loadConfig, parseDockerHost } from '../server/config.mjs';
-import { parseInclude, prettyName, readManifest } from '../server/github.mjs';
+import { appDescription, parseInclude, prettyName, readManifest } from '../server/github.mjs';
 import { parseStatus } from '../server/presence.mjs';
 
 test('version names and ordering', () => {
@@ -222,6 +222,50 @@ test('ensureGithubVersion: identical files (204) reuse the latest named version'
   const r = await ensureGithubVersion(lynx, { orgId: 10, pkg });
   assert.equal(r.version, '1.0.0');
   assert.equal(r.sameAs, '1.1.0');
+});
+
+test('ensureGithubVersion retries a 500 on create with the short description', async () => {
+  const lynx = fakeLynx();
+  const create = lynx.createEdgeApp;
+  let tries = 0;
+  lynx.createEdgeApp = async (a) => {
+    tries += 1;
+    if (a.description === '# Readme') throw Object.assign(new Error('Internal Server Error'), { status: 500, method: 'POST', path: '/api/v2/edge/app' });
+    return create(a);
+  };
+  const r = await ensureGithubVersion(lynx, { orgId: 10, pkg });
+  assert.equal(tries, 2);
+  assert.equal(r.app.description, 'Larm\n\nhttps://github.com/example-org/temperature-alarm');
+  assert.equal(r.version, '1.1.0');
+});
+
+test('ensureGithubVersion names the step and the call that failed', async () => {
+  const lynx = fakeLynx();
+  lynx.createEdgeApp = async () => {
+    throw Object.assign(new Error('Internal Server Error'), { status: 500, method: 'POST', path: '/api/v2/edge/app' });
+  };
+  await assert.rejects(ensureGithubVersion(lynx, { orgId: 10, pkg }), {
+    message: 'Skapar appen i IoT Open: Internal Server Error (HTTP 500 på POST /api/v2/edge/app)',
+  });
+  const steps = [];
+  const failingUpload = fakeLynx();
+  failingUpload.createEdgeAppVersion = async () => {
+    throw Object.assign(new Error('Bad Request'), { status: 400, method: 'POST', path: '/api/v2/edge/app/9000/version?x=1' });
+  };
+  await assert.rejects(ensureGithubVersion(failingUpload, { orgId: 10, pkg, onStep: (s) => steps.push(s) }), {
+    message: 'Laddar upp version 1.1.0: Bad Request (HTTP 400 på POST /api/v2/edge/app/9000/version)',
+  });
+  assert.deepEqual(steps.slice(0, 2), ['Letar efter appen i IoT Open…', 'Skapar appen i IoT Open…']);
+});
+
+test('appDescription keeps short texts and cuts long ones at a paragraph with a link', () => {
+  assert.equal(appDescription('  Kort text  ', 'https://github.com/o/r'), 'Kort text');
+  const long = Array.from({ length: 60 }, (_, i) => `Stycke ${i} ${'x'.repeat(150)}`).join('\n\n');
+  const d = appDescription(long, 'https://github.com/o/r');
+  assert.ok(d.length <= 4000, String(d.length));
+  assert.match(d, /\n\n…\n\nHela beskrivningen: https:\/\/github\.com\/o\/r$/);
+  assert.match(d.split('\n\n…')[0], /x$/, 'cut after a whole paragraph');
+  assert.equal(appDescription(undefined, 'u'), '');
 });
 
 test('docker log demultiplexing', () => {

@@ -88,7 +88,7 @@ async function request(path, { method = 'GET', body, headers = {}, auth = true }
   }
   const res = await fetch(apiUrl(path), { method, headers: h, body: payload });
   if (res.status === 401 && auth && token) checkSession(token);
-  if (!res.ok) throw await parseError(res);
+  if (!res.ok) throw Object.assign(await parseError(res), { method, path });
   if (res.status === 204) return null;
   const text = await res.text();
   if (!text) return null;
