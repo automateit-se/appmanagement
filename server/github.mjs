@@ -20,6 +20,22 @@ const TAG = /^[A-Za-z0-9._\/-]{1,100}$/;
 const SHA = /^[0-9a-f]{7,40}$/i;
 const MAX_FILE = 512 * 1024;
 const MAX_README = 20000;
+// IoT Open refuses (HTTP 500) an edge app whose description is too long: about 6 kB went through, 10 kB did not
+const MAX_DESCRIPTION = 4000;
+
+/**
+ * The description IoT Open gets: the text as it is when short enough, else cut at a paragraph before
+ * MAX_DESCRIPTION characters, with a link to the whole text on GitHub.
+ */
+export function appDescription(text, url, max = MAX_DESCRIPTION) {
+  const t = String(text || '').trim();
+  if (t.length <= max) return t;
+  const more = `\n\n…\n\nHela beskrivningen: ${url}`;
+  let cut = t.slice(0, max - more.length);
+  const para = cut.lastIndexOf('\n\n');
+  if (para > cut.length / 2) cut = cut.slice(0, para);
+  return cut.trimEnd() + more;
+}
 const MANIFESTS = ['edge-app.json', 'edge_app.json'];
 
 export const prettyName = (repo) => {
@@ -234,7 +250,7 @@ export function githubClient(cfg) {
         meta: {
           name,
           short_description: (man?.short_description || d.description || name).slice(0, 250),
-          description: (man?.description || readme || d.description || '').slice(0, MAX_README),
+          description: appDescription(man?.description || readme || d.description || '', d.url),
           tags: man?.tags || d.topics.slice(0, 20),
           category: man?.category || (typeof appJson.category === 'string' && appJson.category ? appJson.category : 'other'),
           source_url: d.url,
