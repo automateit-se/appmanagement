@@ -293,3 +293,16 @@ export function withoutRemoved(values, diff) {
   for (const r of diff?.removed || []) delete out[r.name];
   return out;
 }
+
+/**
+ * A name for a new instance that no instance on the installation has: the wanted name itself when free, else the
+ * same with the lowest free number ("Väderdata 2", "Väderdata 3", …). Case and spaces at the ends do not count.
+ */
+export function uniqueName(wanted, taken = []) {
+  const base = String(wanted || '').trim() || 'App';
+  const used = new Set((taken || []).map((n) => String(n || '').trim().toLowerCase()));
+  if (!used.has(base.toLowerCase())) return base;
+  // "Väderdata 3" copied again counts on from "Väderdata", not "Väderdata 3 2"
+  const stem = base.replace(/\s+\d+$/, '') || base;
+  for (let n = 2; ; n++) if (!used.has(`${stem} ${n}`.toLowerCase())) return `${stem} ${n}`;
+}
