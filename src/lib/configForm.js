@@ -210,3 +210,86 @@ export function matchesFilter(item, filter) {
     return String(have) === String(want);
   });
 }
+
+// ---- what an update changes in the settings ---------------------------------------------------------------------
+
+const same = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+const LIMITS = ['min', 'max'];
+
+/** Readable value of a setting: option texts, on/off, lists, numbers and text. */
+export function describeValue(input, v) {
+  if (v === undefined || v === null || v === '') return '(tomt)';
+  const kind = inputKind(input || {});
+  if (String(input?.type).toLowerCase() === 'password') return '••••';
+  if (kind === 'toggle') return isToggleOn(input, v) ? 'På' : 'Av';
+  if (kind === 'option') return String(input.values?.[String(v)] ?? v);
+  if (kind === 'checkbox' && Array.isArray(v)) return v.map((x) => input.values?.[String(x)] ?? x).join(', ') || '(inget valt)';
+  if (kind === 'repeat' && Array.isArray(v)) return `${v.length} st`;
+  if (['functions', 'devices', 'notifications'].includes(kind)) return `${Array.isArray(v) ? v.length : Object.keys(v || {}).length} valda`;
+  if (typeof v === 'object') return JSON.stringify(v);
+  return String(v);
+}
+
+/**
+ * What an update from one version's settings (oldOptions, null when unknown) to another's (newOptions) means for an
+ * instance's config:
+ *   added:   settings the new version has and the old did not, with the value they will get (their default)
+ *   removed: settings the old version had and the new does not, with the value they have now; they are dropped on
+ *            update. Without the old version's settings, config keys the new version does not know are listed as
+ *            unknown instead, and kept (an app may read a key its form does not show).
+ *   changed: settings in both whose type, default, limits, choices or required flag changed, and settings whose
+ *            current value the new version does not accept
+ *   unchanged: the number of settings that stay as they are
+ */
+export function settingsDiff(oldOptions, newOptions, config = {}) {
+  const now = formLayout(newOptions).inputs;
+  const before = oldOptions ? formLayout(oldOptions).inputs : null;
+  const newTop = topLevel(newOptions);
+  const oldTop = oldOptions ? topLevel(oldOptions) : null;
+  const cfg = config || {};
+  const label = (name, input) => input?.name || name;
+  const errors = validate(newOptions, initialValues(newOptions, cfg));
+
+  const added = [];
+  const changed = [];
+  let unchanged = 0;
+  for (const name of newTop) {
+    const input = now[name];
+    const had = oldTop ? oldTop.includes(name) : cfg[name] !== undefined;
+    if (!had) {
+      added.push({ name, label: label(name, input), value: describeValue(input, defaultFor(input, now)), required: !!input.required && defaultFor(input, now) === undefined });
+      continue;
+    }
+    const was = before?.[name];
+    const notes = [];
+    if (was) {
+      if (inputKind(was) !== inputKind(input)) notes.push(`typ: ${was.type} → ${input.type}`);
+      if (!same(was.default, input.default)) notes.push(`standardvärde: ${describeValue(was, was.default)} → ${describeValue(input, input.default)}`);
+      for (const k of LIMITS) if (!same(was[k], input[k])) notes.push(`${k === 'min' ? 'minsta' : 'största'} värde: ${was[k] ?? '–'} → ${input[k] ?? '–'}`);
+      if (!same(Object.keys(was.values || {}), Object.keys(input.values || {}))) {
+        const gone = Object.keys(was.values || {}).filter((k) => !(k in (input.values || {})));
+        const fresh = Object.keys(input.values || {}).filter((k) => !(k in (was.values || {})));
+        if (fresh.length) notes.push(`nya val: ${fresh.map((k) => input.values[k]).join(', ')}`);
+        if (gone.length) notes.push(`borttagna val: ${gone.map((k) => was.values[k]).join(', ')}`);
+      }
+      if (!was.required && input.required) notes.push('måste nu fyllas i');
+    }
+    const problem = errors[name] || (Object.keys(errors).some((k) => k.startsWith(`${name}.`)) ? 'Ett värde i listan godtas inte' : null);
+    if (notes.length || problem) changed.push({ name, label: label(name, input), value: describeValue(input, cfg[name] ?? defaultFor(input, now)), notes, problem });
+    else unchanged++;
+  }
+
+  const known = new Set([...newTop, ...Object.keys(now)]);
+  const leftover = Object.keys(cfg).filter((k) => !known.has(k));
+  const removed = oldTop ? leftover.filter((k) => oldTop.includes(k) || (before && before[k])).map((name) => ({ name, label: label(name, before[name]), value: describeValue(before[name], cfg[name]) })) : [];
+  const gone = new Set(removed.map((r) => r.name));
+  const unknown = leftover.filter((k) => !gone.has(k)).map((name) => ({ name, label: name, value: describeValue(null, cfg[name]) }));
+  return { added, removed, changed, unknown, unchanged, any: added.length + removed.length + changed.length + unknown.length > 0 };
+}
+
+/** The config an update saves: the form's values without the settings the new version no longer has. */
+export function withoutRemoved(values, diff) {
+  const out = { ...(values || {}) };
+  for (const r of diff?.removed || []) delete out[r.name];
+  return out;
+}

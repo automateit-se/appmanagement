@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react';
 import { lynx } from '../api/lynx.js';
 import { backend } from '../api/backend.js';
 import { ensureGithubVersion } from '../lib/install.js';
-import { cleanValues, initialValues, validate } from '../lib/configForm.js';
+import { cleanValues, initialValues, settingsDiff, validate, withoutRemoved } from '../lib/configForm.js';
 import { ConfigForm } from './ConfigForm.jsx';
+import { SettingsDiff } from './SettingsDiff.jsx';
 import { Field, Modal, errText } from './Modal.jsx';
 
 /**
@@ -12,6 +13,7 @@ import { Field, Modal, errText } from './Modal.jsx';
  *   job.github: { owner, repo, tag } - the version comes from GitHub (uploaded to IoT Open when needed)
  *   job.app + job.version: an app and version that already exist in IoT Open
  *   job.instance: the installed instance (update, settings)
+ *   job.from: install only - an installed instance of the same app to run next to: its settings are copied
  */
 export function InstallDialog({ installation, job, onClose, onDone }) {
   const iid = installation.id;
@@ -39,10 +41,19 @@ export function InstallDialog({ installation, job, onClose, onDone }) {
       }
       setStep('Läser appens inställningar…');
       const options = (await lynx.edgeAppOptions(app.id, version)) || {};
+      // an update, or a new instance next to an installed one: the installed version's settings too, to show what
+      // changes (null when they cannot be read)
+      const base = job.mode === 'update' ? job.instance : job.mode === 'install' ? job.from : null;
+      let oldOptions = null;
+      if (base && base.version !== version) {
+        oldOptions = await lynx.edgeAppOptions(base.app_id ?? app.id, base.version).catch(() => null);
+      }
       if (!alive) return;
-      setReady({ app, version, options, sameAs });
-      setValues(initialValues(options, job.instance?.config));
-      setName(job.instance?.name || app.name || '');
+      const diff = base && base.version !== version ? settingsDiff(oldOptions, options, base.config) : null;
+      setReady({ app, version, options, sameAs, diff, oldKnown: !!oldOptions });
+      setValues(initialValues(options, base?.config));
+      // next to an installed instance: a name that tells them apart
+      setName(job.from ? `${job.from.name} ${version}` : job.instance?.name || app.name || '');
     })().catch((e) => alive && setError(errText(e)));
     return () => {
       alive = false;
@@ -70,7 +81,8 @@ export function InstallDialog({ installation, job, onClose, onDone }) {
     setError('');
     setSaving(true);
     try {
-      const body = { app_id: ready.app.id, version: ready.version, name: name.trim() || ready.app.name, config: cleanValues(ready.options, cfg) };
+      // settings the new version no longer has are not carried over
+      const body = { app_id: ready.app.id, version: ready.version, name: name.trim() || ready.app.name, config: cleanValues(ready.options, withoutRemoved(cfg, ready.diff)) };
       if (job.mode === 'install') await lynx.createInstance(iid, body);
       else await lynx.updateInstance(iid, { ...job.instance, ...body });
       onDone();
@@ -81,7 +93,7 @@ export function InstallDialog({ installation, job, onClose, onDone }) {
   };
 
   const title =
-    job.mode === 'install' ? `Installera ${job.title || ready?.app?.name || ''}` : job.mode === 'update' ? `Uppdatera ${job.instance.name}` : `Inställningar för ${job.instance.name}`;
+    job.mode === 'install' && job.from ? `Installera ${ready?.version || 'ny version'} bredvid ${job.from.name}` : job.mode === 'install' ? `Installera ${job.title || ready?.app?.name || ''}` : job.mode === 'update' ? `Uppdatera ${job.instance.name}` : `Inställningar för ${job.instance.name}`;
   // a GitHub release whose code IoT Open already has under the installed version's name: nothing to update
   const noChange = job.mode === 'update' && !!ready && ready.version === job.instance.version;
   const action = job.mode === 'install' ? 'Installera' : job.mode === 'update' && !noChange ? `Uppdatera till ${ready?.version || ''}` : 'Spara';
@@ -133,10 +145,14 @@ export function InstallDialog({ installation, job, onClose, onDone }) {
               Version <strong>{ready.sameAs || job.github?.tag}</strong> har samma kod som den installerade <strong>{ready.version}</strong>, så det finns inget att uppdatera. Du kan ändra och spara inställningarna här.
             </div>
           )}
-          {job.mode === 'update' && !noChange && (
-            <div className="info-box">
-              Från version <strong>{job.instance.version}</strong> till <strong>{ready.version}</strong>. Nuvarande inställningar följer med; kontrollera nya fält innan du uppdaterar.
-            </div>
+          {job.mode === 'update' && !noChange && <SettingsDiff diff={ready.diff} from={job.instance.version} to={ready.version} oldKnown={ready.oldKnown} />}
+          {job.from && (
+            <>
+              <div className="warn-box">
+                <strong>{job.from.name}</strong> (version {job.from.version}) finns kvar och fortsätter att köras. Båda körs samtidigt på edge clienten, så kontrollera att de inte krockar, till exempel om samma port, samma funktioner eller samma ämnen i MQTT. Ta bort den gamla när den nya fungerar.
+              </div>
+              <SettingsDiff diff={ready.diff} from={job.from.version} to={ready.version} oldKnown={ready.oldKnown} copied />
+            </>
           )}
           <Field label="Namn på installerad app" help="Visas i listan över appar på installationen.">
             <input value={name} onChange={(e) => setName(e.target.value)} />
@@ -146,10 +162,16 @@ export function InstallDialog({ installation, job, onClose, onDone }) {
               <textarea className="mono" rows={14} value={rawText} onChange={(e) => setRawText(e.target.value)} spellCheck={false} />
             </Field>
           ) : (
-            <ConfigForm iid={iid} options={ready.options} values={values} onChange={setValues} errors={errors} />
+            <ConfigForm iid={iid} options={ready.options} values={values} onChange={setValues} errors={errors} marks={marksOf(ready.diff)} />
           )}
         </>
       )}
     </Modal>
   );
+}
+
+/** Badges for the form: "Ny" on new settings, "Ändrad" on changed ones. */
+function marksOf(diff) {
+  if (!diff) return null;
+  return Object.fromEntries([...diff.added.map((r) => [r.name, 'Ny']), ...diff.changed.map((r) => [r.name, 'Ändrad'])]);
 }

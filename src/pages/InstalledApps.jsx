@@ -191,6 +191,16 @@ export default function InstalledApps({ installation, access }) {
                     <Icon name="download" size={16} /> Uppdatera
                   </button>
                 )}
+                {update && canRemove && (
+                  <button
+                    type="button"
+                    className="btn"
+                    title={`Installerar ${latest.version} som en egen app med samma inställningar. ${inst.name} finns kvar.`}
+                    onClick={() => setJob(latest.github ? { mode: 'install', from: inst, github: latest.github } : { mode: 'install', from: inst, app, version: latest.version })}
+                  >
+                    <Icon name="plus" size={16} /> Installera bredvid
+                  </button>
+                )}
                 {app && canUpdate && (
                   <button type="button" className="btn" onClick={() => setJob({ mode: 'settings', instance: inst, app })}>
                     <Icon name="settings" size={16} /> Inställningar

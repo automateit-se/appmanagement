@@ -263,14 +263,15 @@ function Control({ name, input, inputs, value, onChange, pick, errors, path }) {
   return <input id={id} value={value ?? ''} onChange={(e) => onChange(e.target.value)} spellCheck={false} />;
 }
 
-function Field({ name, input, inputs, value, onChange, pick, errors, path }) {
+function Field({ name, input, inputs, value, onChange, pick, errors, path, mark }) {
   const kind = inputKind(input);
   const error = errors[path];
   return (
-    <div className="field">
+    <div className={mark ? `field marked mark-${mark === 'Ny' ? 'new' : 'changed'}` : 'field'}>
       <label htmlFor={kind === 'repeat' || kind.endsWith('s') ? undefined : `cfg-${path}`}>
         {input.name || name}
         {input.required && <span className="req"> *</span>}
+        {mark && <span className={`badge ${mark === 'Ny' ? 'accent' : ''}`}>{mark}</span>}
       </label>
       <Control name={name} input={input} inputs={inputs} value={value} onChange={onChange} pick={pick} errors={errors} path={path} />
       {error ? <small className="err">{error}</small> : input.description ? <small className="muted">{input.description}</small> : null}
@@ -278,7 +279,7 @@ function Field({ name, input, inputs, value, onChange, pick, errors, path }) {
   );
 }
 
-export function ConfigForm({ iid, options, values, onChange, errors = {} }) {
+export function ConfigForm({ iid, options, values, onChange, errors = {}, marks = null }) {
   const layout = useMemo(() => formLayout(options), [options]);
   const pick = usePickables(iid, layout.inputs);
 
@@ -306,6 +307,7 @@ export function ConfigForm({ iid, options, values, onChange, errors = {} }) {
               pick={pick}
               errors={errors}
               path={name}
+              mark={marks?.[name]}
             />
           ))}
         </fieldset>
