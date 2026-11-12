@@ -287,8 +287,8 @@ export default function Catalog({ installation, access }) {
           installation={installation}
           job={job}
           onClose={() => setJob(null)}
-          onDone={() => {
-            setDone(job.title || 'Appen');
+          onDone={(name) => {
+            setDone(name || job.title || 'Appen');
             setJob(null);
           }}
         />

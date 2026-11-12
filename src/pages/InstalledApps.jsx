@@ -201,6 +201,11 @@ export default function InstalledApps({ installation, access }) {
                     <Icon name="plus" size={16} /> Installera bredvid
                   </button>
                 )}
+                {app && canRemove && (
+                  <button type="button" className="btn" title={`En ny instans med samma version och inställningar som ${inst.name}`} onClick={() => setJob({ mode: 'install', copy: inst, app })}>
+                    <Icon name="copy" size={16} /> Kopiera
+                  </button>
+                )}
                 {app && canUpdate && (
                   <button type="button" className="btn" onClick={() => setJob({ mode: 'settings', instance: inst, app })}>
                     <Icon name="settings" size={16} /> Inställningar

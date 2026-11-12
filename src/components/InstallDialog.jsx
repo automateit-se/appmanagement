@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { lynx } from '../api/lynx.js';
 import { backend } from '../api/backend.js';
 import { ensureGithubVersion } from '../lib/install.js';
-import { cleanValues, initialValues, settingsDiff, validate, withoutRemoved } from '../lib/configForm.js';
+import { cleanValues, initialValues, settingsDiff, uniqueName, validate, withoutRemoved } from '../lib/configForm.js';
 import { ConfigForm } from './ConfigForm.jsx';
 import { SettingsDiff } from './SettingsDiff.jsx';
 import { Field, Modal, errText } from './Modal.jsx';
@@ -14,6 +14,7 @@ import { Field, Modal, errText } from './Modal.jsx';
  *   job.app + job.version: an app and version that already exist in IoT Open
  *   job.instance: the installed instance (update, settings)
  *   job.from: install only - an installed instance of the same app to run next to: its settings are copied
+ *   job.copy: install only - an installed instance to copy: the same app, version and settings, as a new instance
  */
 export function InstallDialog({ installation, job, onClose, onDone }) {
   const iid = installation.id;
@@ -31,7 +32,7 @@ export function InstallDialog({ installation, job, onClose, onDone }) {
     let alive = true;
     (async () => {
       let app = job.app;
-      let version = job.version || job.instance?.version;
+      let version = job.version || job.instance?.version || job.copy?.version;
       let sameAs = null;
       if (job.github) {
         setStep('Hämtar appen från GitHub…');
@@ -43,7 +44,7 @@ export function InstallDialog({ installation, job, onClose, onDone }) {
       const options = (await lynx.edgeAppOptions(app.id, version)) || {};
       // an update, or a new instance next to an installed one: the installed version's settings too, to show what
       // changes (null when they cannot be read)
-      const base = job.mode === 'update' ? job.instance : job.mode === 'install' ? job.from : null;
+      const base = job.mode === 'update' ? job.instance : job.mode === 'install' ? job.from || job.copy : null;
       let oldOptions = null;
       if (base && base.version !== version) {
         oldOptions = await lynx.edgeAppOptions(base.app_id ?? app.id, base.version).catch(() => null);
@@ -51,14 +52,18 @@ export function InstallDialog({ installation, job, onClose, onDone }) {
       if (!alive) return;
       const diff = base && base.version !== version ? settingsDiff(oldOptions, options, base.config) : null;
       setReady({ app, version, options, sameAs, diff, oldKnown: !!oldOptions });
+      // a new instance gets a name no instance on the installation has, so ten copies can be told apart
+      let taken = [];
+      if (job.mode === 'install') taken = ((await lynx.instances(iid).catch(() => [])) || []).map((i) => i.name);
+      if (!alive) return;
       setValues(initialValues(options, base?.config));
-      // next to an installed instance: a name that tells them apart
-      setName(job.from ? `${job.from.name} ${version}` : job.instance?.name || app.name || '');
+      if (job.mode !== 'install') setName(job.instance?.name || app.name || '');
+      else setName(uniqueName(job.from ? `${job.from.name} ${version}` : job.copy ? job.copy.name : app.name, taken));
     })().catch((e) => alive && setError(errText(e)));
     return () => {
       alive = false;
     };
-  }, [job, installation.organization_id]);
+  }, [job, installation.organization_id, iid]);
 
   const save = async () => {
     let cfg = values;
@@ -85,7 +90,7 @@ export function InstallDialog({ installation, job, onClose, onDone }) {
       const body = { app_id: ready.app.id, version: ready.version, name: name.trim() || ready.app.name, config: cleanValues(ready.options, withoutRemoved(cfg, ready.diff)) };
       if (job.mode === 'install') await lynx.createInstance(iid, body);
       else await lynx.updateInstance(iid, { ...job.instance, ...body });
-      onDone();
+      onDone(body.name);
     } catch (e) {
       setError(errText(e));
       setSaving(false);
@@ -93,7 +98,7 @@ export function InstallDialog({ installation, job, onClose, onDone }) {
   };
 
   const title =
-    job.mode === 'install' && job.from ? `Installera ${ready?.version || 'ny version'} bredvid ${job.from.name}` : job.mode === 'install' ? `Installera ${job.title || ready?.app?.name || ''}` : job.mode === 'update' ? `Uppdatera ${job.instance.name}` : `Inställningar för ${job.instance.name}`;
+    job.mode === 'install' && job.from ? `Installera ${ready?.version || 'ny version'} bredvid ${job.from.name}` : job.mode === 'install' && job.copy ? `Kopiera ${job.copy.name}` : job.mode === 'install' ? `Installera ${job.title || ready?.app?.name || ''}` : job.mode === 'update' ? `Uppdatera ${job.instance.name}` : `Inställningar för ${job.instance.name}`;
   // a GitHub release whose code IoT Open already has under the installed version's name: nothing to update
   const noChange = job.mode === 'update' && !!ready && ready.version === job.instance.version;
   const action = job.mode === 'install' ? 'Installera' : job.mode === 'update' && !noChange ? `Uppdatera till ${ready?.version || ''}` : 'Spara';
@@ -146,6 +151,11 @@ export function InstallDialog({ installation, job, onClose, onDone }) {
             </div>
           )}
           {job.mode === 'update' && !noChange && <SettingsDiff diff={ready.diff} from={job.instance.version} to={ready.version} oldKnown={ready.oldKnown} />}
+          {job.copy && (
+            <div className="info-box">
+              En ny instans av <strong>{ready.app.name}</strong> version <strong>{ready.version}</strong> med inställningarna från <strong>{job.copy.name}</strong>. Ändra det som ska skilja dem åt, till exempel en port, funktioner eller ämnen i MQTT. {job.copy.name} påverkas inte.
+            </div>
+          )}
           {job.from && (
             <>
               <div className="warn-box">

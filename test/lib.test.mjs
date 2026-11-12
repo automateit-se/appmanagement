@@ -455,3 +455,16 @@ test('settingsDiff: the same settings, and an unreadable old version', async () 
   const p = settingsDiff({ input: { k: { type: 'password' } }, guide: [] }, { input: {}, guide: [] }, { k: 'secret-value' });
   assert.equal(p.removed[0].value, '••••');
 });
+
+test('uniqueName: a name no instance on the installation has', async () => {
+  const { uniqueName } = await import('../src/lib/configForm.js');
+  assert.equal(uniqueName('Väderdata', []), 'Väderdata');
+  assert.equal(uniqueName('Väderdata', ['Väder Malmö']), 'Väderdata');
+  assert.equal(uniqueName('Väderdata', ['Väderdata']), 'Väderdata 2');
+  assert.equal(uniqueName('Väderdata', ['väderdata ', 'Väderdata 2', 'Väderdata 4']), 'Väderdata 3');
+  // copying "Väderdata 3" counts on from "Väderdata"
+  assert.equal(uniqueName('Väderdata 3', ['Väderdata', 'Väderdata 2', 'Väderdata 3']), 'Väderdata 4');
+  // next to an old version: "<name> <version>", numbered when that exists too
+  assert.equal(uniqueName('Väderdata 1.1.0', ['Väderdata', 'Väderdata 1.1.0']), 'Väderdata 1.1.0 2');
+  assert.equal(uniqueName('', []), 'App');
+});
