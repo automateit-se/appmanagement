@@ -376,3 +376,21 @@ select.compact { width: auto; padding: 4px 8px; font-size: 13px; }
 .port-list { margin: 6px 0 12px; padding-left: 18px; }
 .port-row { align-items: flex-end; max-width: 480px; }
 .port-row .field { flex: 1; }
+
+/* an update's changes to the settings (components/SettingsDiff.jsx) */
+.settings-diff { border: 1px solid var(--border, #d6e3ea); border-radius: 8px; padding: 10px 12px; margin: 10px 0; font-size: 14px; }
+.settings-diff > p { margin: 0 0 6px; }
+.diff-group { border-left: 3px solid var(--muted); padding: 2px 0 2px 10px; margin: 8px 0; }
+.diff-group h4 { margin: 0; font-size: 14px; }
+.diff-group > p { margin: 0 0 4px; }
+.diff-group ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.diff-group li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+.diff-name { font-weight: 600; }
+.diff-key { font-size: 12px; color: var(--muted); }
+.diff-value { margin-left: auto; overflow-wrap: anywhere; }
+.diff-notes { flex-basis: 100%; }
+.diff-added { border-left-color: var(--status-ok); }
+.diff-changed { border-left-color: var(--warn-text, #b26a00); }
+.diff-removed { border-left-color: var(--danger); }
+.diff-removed .diff-value { text-decoration: line-through; color: var(--muted); }
+.field.marked > label .badge { margin-left: 8px; }

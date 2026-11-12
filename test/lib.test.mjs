@@ -397,3 +397,61 @@ test('published ports: label and checks', () => {
   assert.throws(() => checkPorts(Array.from({ length: 6 }, (_, i) => ({ container: 9000 + i, host: 18000 + i })), range), /Högst 5/);
   assert.throws(() => checkPorts('8090', range), /lista/);
 });
+
+test('settingsDiff: new, changed, removed and unknown settings of an update', async () => {
+  const { settingsDiff, withoutRemoved, cleanValues, initialValues } = await import('../src/lib/configForm.js');
+  const v1 = {
+    input: {
+      city: { type: 'text', name: 'Ort', required: true, default: 'Stockholm' },
+      interval: { type: 'number', name: 'Intervall', default: 30, min: 5, max: 1440 },
+      language: { type: 'option', name: 'Språk', values: { sv: 'Svenska', en: 'Engelska' }, default: 'sv' },
+      level: { type: 'toggle', name: 'Nivå', true_value: 'high', false_value: 'low' },
+    },
+    guide: [{ id: 'a', title: 'A', input_fields: ['city', 'interval', 'language', 'level'] }],
+  };
+  const v2 = {
+    input: {
+      city: v1.input.city,
+      interval: { ...v1.input.interval, default: 60, max: 720 },
+      level: { type: 'option', name: 'Nivå', values: { high: 'Hög', low: 'Låg', mid: 'Mellan' } },
+      units: { type: 'option', name: 'Enheter', values: { metric: 'Metriska', imperial: 'Imperiska' }, default: 'metric' },
+      token: { type: 'password', name: 'Nyckel', required: true },
+    },
+    guide: [{ id: 'a', title: 'A', input_fields: ['city', 'interval', 'level', 'units', 'token'] }],
+  };
+  const config = { city: 'Lund', interval: 900, language: 'en', level: 'high', custom: 7 };
+  const d = settingsDiff(v1, v2, config);
+  assert.deepEqual(d.added.map((r) => [r.name, r.value, r.required]), [['units', 'Metriska', false], ['token', '(tomt)', true]]);
+  assert.deepEqual(d.removed.map((r) => [r.name, r.label, r.value]), [['language', 'Språk', 'Engelska']]);
+  assert.deepEqual(d.unknown.map((r) => r.name), ['custom']);
+  assert.equal(d.unchanged, 1); // city
+  const interval = d.changed.find((r) => r.name === 'interval');
+  assert.deepEqual(interval.notes, ['standardvärde: 30 → 60', 'största värde: 1440 → 720']);
+  assert.equal(interval.problem, 'Högst 720'); // 900 is no longer accepted
+  assert.equal(interval.value, '900');
+  const level = d.changed.find((r) => r.name === 'level');
+  assert.match(level.notes.join(' | '), /typ: toggle → option/);
+  assert.ok(d.any);
+  // saving: the removed setting is dropped, unknown keys stay
+  const saved = cleanValues(v2, withoutRemoved(initialValues(v2, config), d));
+  assert.equal(saved.language, undefined);
+  assert.equal(saved.custom, 7);
+  assert.equal(saved.units, 'metric');
+});
+
+test('settingsDiff: the same settings, and an unreadable old version', async () => {
+  const { settingsDiff } = await import('../src/lib/configForm.js');
+  const v = { input: { a: { type: 'number', default: 1 } }, guide: [] };
+  const same = settingsDiff(v, v, { a: 2 });
+  assert.equal(same.any, false);
+  assert.equal(same.unchanged, 1);
+  // without the old version's settings: what the config has and the new form does not is kept as unknown
+  const d = settingsDiff(null, { input: { a: { type: 'number' }, b: { type: 'text', default: 'x' } }, guide: [] }, { a: 2, gone: 'y' });
+  assert.deepEqual(d.added.map((r) => r.name), ['b']);
+  assert.deepEqual(d.removed, []);
+  assert.deepEqual(d.unknown.map((r) => r.name), ['gone']);
+  assert.equal(d.unchanged, 1);
+  // secrets are never shown
+  const p = settingsDiff({ input: { k: { type: 'password' } }, guide: [] }, { input: {}, guide: [] }, { k: 'secret-value' });
+  assert.equal(p.removed[0].value, '••••');
+});

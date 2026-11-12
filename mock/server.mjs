@@ -79,8 +79,19 @@ const weatherJson = {
   input: {
     city: { type: 'text', name: 'Ort', description: 'Orten vädret hämtas för', required: true, default: 'Stockholm' },
     interval: { type: 'number', name: 'Intervall (minuter)', description: 'Hur ofta vädret hämtas', default: 30, min: 5, max: 1440 },
+    language: { type: 'option', name: 'Språk', description: 'Språket i väderbeskrivningen', values: { sv: 'Svenska', en: 'Engelska' }, default: 'sv' },
   },
-  guide: [{ id: 'stage_1', title: 'Väderdata', description: 'Välj ort och hur ofta vädret ska hämtas.', input_fields: ['city', 'interval'] }],
+  guide: [{ id: 'stage_1', title: 'Väderdata', description: 'Välj ort och hur ofta vädret ska hämtas.', input_fields: ['city', 'interval', 'language'] }],
+};
+// 1.1.0: "language" is gone, "units" is new, and the interval has a new default and a lower maximum
+const weatherJson11 = {
+  ...weatherJson,
+  input: {
+    city: weatherJson.input.city,
+    interval: { ...weatherJson.input.interval, default: 60, max: 720 },
+    units: { type: 'option', name: 'Enheter', description: 'Enheter för temperatur och vind', values: { metric: 'Metriska (°C, m/s)', imperial: 'Imperiska (°F, mph)' }, default: 'metric' },
+  },
+  guide: [{ id: 'stage_1', title: 'Väderdata', description: 'Välj ort och hur ofta vädret ska hämtas.', input_fields: ['city', 'interval', 'units'] }],
 };
 const edgeApps = [
   {
@@ -89,7 +100,7 @@ const edgeApps = [
     official: true, public: true, source_url: '', created: now() - 86400 * 300, updated: now() - 86400 * 20,
     versions: [
       { name: '1.0.0', hash: hash(), timestamp: now() - 86400 * 300, app_json: JSON.stringify(weatherJson), app_lua: '-- weather 1.0.0\n' },
-      { name: '1.1.0', hash: hash(), timestamp: now() - 86400 * 20, app_json: JSON.stringify(weatherJson), app_lua: '-- weather 1.1.0\n' },
+      { name: '1.1.0', hash: hash(), timestamp: now() - 86400 * 20, app_json: JSON.stringify(weatherJson11), app_lua: '-- weather 1.1.0\n' },
     ],
   },
   {
@@ -108,7 +119,7 @@ const edgeApps = [
   },
 ];
 let nextAppId = 4;
-const instances = [{ id: 9001, app_id: 1, installation_id: 1001, version: '1.0.0', name: 'Väderdata', config: { city: 'Stockholm', interval: 30 }, created: now() - 86400 * 100, updated: now() - 86400 * 100 }];
+const instances = [{ id: 9001, app_id: 1, installation_id: 1001, version: '1.0.0', name: 'Väderdata', config: { city: 'Stockholm', interval: 30, language: 'sv' }, created: now() - 86400 * 100, updated: now() - 86400 * 100 }];
 let nextInstanceId = 9002;
 
 const publicApp = ({ versions, ...a }) => a;
