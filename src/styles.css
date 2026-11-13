@@ -394,3 +394,10 @@ select.compact { width: auto; padding: 4px 8px; font-size: 13px; }
 .diff-removed { border-left-color: var(--danger); }
 .diff-removed .diff-value { text-decoration: line-through; color: var(--muted); }
 .field.marked > label .badge { margin-left: 8px; }
+
+.box-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}

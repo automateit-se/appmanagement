@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { lynx } from '../api/lynx.js';
 import { backend } from '../api/backend.js';
 import { ensureGithubVersion } from '../lib/install.js';
-import { cleanValues, initialValues, settingsDiff, uniqueName, validate, withoutRemoved } from '../lib/configForm.js';
+import { cleanValues, initialValues, sameConfig, settingsDiff, uniqueName, validate, withoutRemoved } from '../lib/configForm.js';
 import { ConfigForm } from './ConfigForm.jsx';
 import { SettingsDiff } from './SettingsDiff.jsx';
 import { Field, Modal, errText } from './Modal.jsx';
@@ -27,6 +27,10 @@ export function InstallDialog({ installation, job, onClose, onDone }) {
   const [saving, setSaving] = useState(false);
   const [raw, setRaw] = useState(false);
   const [rawText, setRawText] = useState('');
+  // the instance as it was when the form was filled in, and whether it has changed since (another front end, or the
+  // app itself writing its form, like För länge from 0.4)
+  const [loaded, setLoaded] = useState(job.instance || null);
+  const [changed, setChanged] = useState(null);
 
   useEffect(() => {
     let alive = true;
@@ -44,7 +48,11 @@ export function InstallDialog({ installation, job, onClose, onDone }) {
       const options = (await lynx.edgeAppOptions(app.id, version)) || {};
       // an update, or a new instance next to an installed one: the installed version's settings too, to show what
       // changes (null when they cannot be read)
-      const base = job.mode === 'update' ? job.instance : job.mode === 'install' ? job.from || job.copy : null;
+      // the installed instance read again, so the form starts from what applies now
+      const current = job.instance ? (await freshInstance(iid, job.instance.id)) || job.instance : null;
+      if (!alive) return;
+      if (current) setLoaded(current);
+      const base = job.mode === 'update' ? current : job.mode === 'install' ? job.from || job.copy : null;
       let oldOptions = null;
       if (base && base.version !== version) {
         oldOptions = await lynx.edgeAppOptions(base.app_id ?? app.id, base.version).catch(() => null);
@@ -56,7 +64,7 @@ export function InstallDialog({ installation, job, onClose, onDone }) {
       let taken = [];
       if (job.mode === 'install') taken = ((await lynx.instances(iid).catch(() => [])) || []).map((i) => i.name);
       if (!alive) return;
-      setValues(initialValues(options, base?.config));
+      setValues(initialValues(options, job.mode === 'settings' ? current?.config : base?.config));
       if (job.mode !== 'install') setName(job.instance?.name || app.name || '');
       else setName(uniqueName(job.from ? `${job.from.name} ${version}` : job.copy ? job.copy.name : app.name, taken));
     })().catch((e) => alive && setError(errText(e)));
@@ -65,7 +73,16 @@ export function InstallDialog({ installation, job, onClose, onDone }) {
     };
   }, [job, installation.organization_id, iid]);
 
-  const save = async () => {
+  /** The newer settings in the form, instead of the ones the person was editing. */
+  const loadNewer = () => {
+    setLoaded(changed);
+    setValues(initialValues(ready.options, changed.config));
+    if (changed.name) setName(changed.name);
+    setChanged(null);
+    setRaw(false);
+  };
+
+  const save = async (force = false) => {
     let cfg = values;
     if (raw) {
       try {
@@ -86,10 +103,22 @@ export function InstallDialog({ installation, job, onClose, onDone }) {
     setError('');
     setSaving(true);
     try {
+      // changed by someone or something else since the form was filled in: ask before overwriting
+      let target = loaded || job.instance;
+      if (job.mode !== 'install') {
+        const now = await freshInstance(iid, job.instance.id);
+        if (now && !force && !sameConfig(now.config, loaded?.config)) {
+          setChanged(now);
+          setSaving(false);
+          return;
+        }
+        if (now) target = now;
+      }
+      setChanged(null);
       // settings the new version no longer has are not carried over
       const body = { app_id: ready.app.id, version: ready.version, name: name.trim() || ready.app.name, config: cleanValues(ready.options, withoutRemoved(cfg, ready.diff)) };
       if (job.mode === 'install') await lynx.createInstance(iid, body);
-      else await lynx.updateInstance(iid, { ...job.instance, ...body });
+      else await lynx.updateInstance(iid, { ...target, ...body });
       onDone(body.name);
     } catch (e) {
       setError(errText(e));
@@ -129,7 +158,7 @@ export function InstallDialog({ installation, job, onClose, onDone }) {
             <button type="button" className="btn" onClick={onClose} disabled={saving}>
               Avbryt
             </button>
-            <button type="button" className="btn primary" onClick={save} disabled={saving}>
+            <button type="button" className="btn primary" onClick={() => save(false)} disabled={saving}>
               {saving ? 'Sparar…' : action}
             </button>
           </>
@@ -137,6 +166,20 @@ export function InstallDialog({ installation, job, onClose, onDone }) {
       }
     >
       {error && <div className="error-box">{error}</div>}
+      {changed && (
+        <div className="warn-box">
+          <strong>Inställningarna har ändrats sedan du öppnade dem</strong>, i ett annat fönster, av någon annan eller av
+          appen själv. Om du sparar ersätter dina värden de nya.
+          <div className="box-actions">
+            <button type="button" className="btn" onClick={loadNewer}>
+              Visa de nya
+            </button>
+            <button type="button" className="btn primary" onClick={() => save(true)} disabled={saving}>
+              Spara mina ändå
+            </button>
+          </div>
+        </div>
+      )}
       {!ready && !error && (
         <div className="progress">
           <span className="spinner" aria-hidden="true" />
@@ -178,6 +221,12 @@ export function InstallDialog({ installation, job, onClose, onDone }) {
       )}
     </Modal>
   );
+}
+
+/** The instance as IoT Open has it now, or null when it cannot be read. */
+async function freshInstance(iid, id) {
+  const list = await lynx.instances(iid).catch(() => null);
+  return (list || []).find((i) => i.id === id) || null;
 }
 
 /** Badges for the form: "Ny" on new settings, "Ändrad" on changed ones. */
