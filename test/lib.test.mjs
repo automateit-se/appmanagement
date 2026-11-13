@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { compareVersions, isCommitVersion, isNewerVersion, sortVersionsDesc, versionName } from '../shared/version.js';
-import { cleanValues, formLayout, initialValues, inputKind, matchesFilter, validate } from '../src/lib/configForm.js';
+import { cleanValues, formLayout, initialValues, inputKind, matchesFilter, sameConfig, validate } from '../src/lib/configForm.js';
 import { ensureGithubVersion, githubRepo, latestVersion, normUrl } from '../src/lib/install.js';
 import { demuxLogs, splitImage } from '../server/docker.mjs';
 import { makeTar } from '../server/tar.mjs';
@@ -467,4 +467,10 @@ test('uniqueName: a name no instance on the installation has', async () => {
   // next to an old version: "<name> <version>", numbered when that exists too
   assert.equal(uniqueName('Väderdata 1.1.0', ['Väderdata', 'Väderdata 1.1.0']), 'Väderdata 1.1.0 2');
   assert.equal(uniqueName('', []), 'App');
+});
+
+test('sameConfig: key order does not matter, values do', () => {
+  assert.equal(sameConfig({ a: 1, b: { c: [1, { d: 2, e: 3 }] } }, { b: { c: [1, { e: 3, d: 2 }] }, a: 1 }), true);
+  assert.equal(sameConfig({ watch: [{ watch_function: 1, watch_label: 'disken' }] }, { watch: [{ watch_function: 1, watch_label: 'diskmaskinen' }] }), false);
+  assert.equal(sameConfig(undefined, {}), true);
 });

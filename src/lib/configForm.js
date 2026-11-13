@@ -306,3 +306,13 @@ export function uniqueName(wanted, taken = []) {
   const stem = base.replace(/\s+\d+$/, '') || base;
   for (let n = 2; ; n++) if (!used.has(`${stem} ${n}`.toLowerCase())) return `${stem} ${n}`;
 }
+
+/** The same config, whatever the order of keys (IoT Open does not keep it). */
+export function sameConfig(a, b) {
+  const norm = (v) => {
+    if (Array.isArray(v)) return v.map(norm);
+    if (isObj(v)) return Object.fromEntries(Object.keys(v).sort().map((k) => [k, norm(v[k])]));
+    return v ?? null;
+  };
+  return JSON.stringify(norm(a ?? {})) === JSON.stringify(norm(b ?? {}));
+}
