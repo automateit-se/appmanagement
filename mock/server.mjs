@@ -64,6 +64,12 @@ const functions = {
     { id: 301, installation_id: 1001, type: 'temperature', meta: { name: 'Temperatur vardagsrum', device_id: '201', topic_read: 'obj/zwave/201/temp' } },
     { id: 302, installation_id: 1001, type: 'temperature', meta: { name: 'Temperatur hall', device_id: '202', topic_read: 'obj/zwave/202/temp' } },
     { id: 303, installation_id: 1001, type: 'switch', meta: { name: 'Lampa hall', device_id: '202', topic_read: 'obj/zwave/202/switch', topic_write: 'set/obj/zwave/202/switch' } },
+    // two functions with the same name, only one of them says open or closed: the latest value tells them apart
+    { id: 304, installation_id: 1001, type: 'door_switch', meta: { name: 'Entrédörr', state_open: '1', state_closed: '0', topic_read: 'obj/zigbee/204/contact' } },
+    { id: 305, installation_id: 1001, type: 'unknown', meta: { name: 'Entrédörr', topic_read: 'obj/zigbee/204/linkquality' } },
+    { id: 306, installation_id: 1001, type: 'door_switch', meta: { name: 'Altandörr', state_open: '1', state_closed: '0', topic_read: 'obj/zigbee/205/contact' } },
+    { id: 307, installation_id: 1001, type: 'switch', meta: { name: 'Kaffebryggare', state_on: '1', state_off: '0', topic_read: 'obj/zigbee/206/switch', topic_write: 'set/obj/zigbee/206/switch' } },
+    { id: 308, installation_id: 1001, type: 'media', meta: { name: 'Högtalare Spela upp', 'ha.part': 'play', topic_write: 'set/obj/ha/speaker/play', 'ha.media_list': JSON.stringify(['iotopen/allt_ok.mp3', 'iotopen/altandorren_oppen.mp3', 'iotopen/kaffebryggaren_pa.mp3']) } },
   ],
   1002: [{ id: 311, installation_id: 1002, type: 'energy', meta: { name: 'Energi', device_id: '211', topic_read: 'obj/modbus/211/energy' } }],
 };
@@ -154,6 +160,15 @@ function publishApp(inst, topic, value, msg, at = Date.now()) {
   const text = JSON.stringify({ value, msg, timestamp: m.timestamp });
   for (const c of mqttClients) if (c.authed && subscribed(c, m.topic)) mqttSend(c, m.topic, text, false);
 }
+// latest values of the sensors above, so the forms can show them
+const seededAt = Date.now();
+setTimeout(() => {
+  const demo = installations[0];
+  publishApp(demo, 'obj/zigbee/204/contact', 0, '', seededAt - 600000);
+  publishApp(demo, 'obj/zigbee/204/linkquality', 87, '', seededAt - 60000);
+  publishApp(demo, 'obj/zigbee/205/contact', 1, '', seededAt - 180000);
+  publishApp(demo, 'obj/zigbee/206/switch', 1, '', seededAt - 3600000);
+}, 0);
 let doorCount = 0;
 function appTraffic(at) {
   const [demo, office] = [installations[0], installations[1]];
@@ -254,6 +269,28 @@ const repos = {
       '2562ba3bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb': { json: { input: {}, guide: [] }, lua: '-- broker tuning\n' },
     },
     releases: { 'v0.1.0': { json: { input: {}, guide: [] }, lua: '-- broker tuning\n', at: '2026-10-27T17:00:00Z', notes: 'First version.' } },
+  },
+  // A form with a function search, a field shown only for some answers ("show_if") and sound files ("suggest").
+  'example-org/status-check': {
+    description: 'Tells what is not as it should be',
+    topics: ['iotopen-edge-app', 'status'],
+    readme: '# Status check\n',
+    releases: {
+      'v0.1.0': {
+        json: {
+          input: {
+            items: { type: 'repeat', name: 'Det här kontrolleras', input_fields: ['item_function', 'item_when', 'item_value', 'item_text', 'item_sound'], min: 1, max: 20 },
+            item_function: { type: 'single_function_selector', name: 'Funktion', required: true },
+            item_when: { type: 'option', name: 'Avviker när den', values: { active: 'är öppen eller på', inactive: 'är stängd eller av', above: 'är över värdet', below: 'är under värdet' }, default: 'active', required: true },
+            item_value: { type: 'text', name: 'Värde', required: true, show_if: { item_when: ['above', 'below'] } },
+            item_text: { type: 'text', name: 'Text', required: true },
+            item_sound: { type: 'text', name: 'Ljud', suggest: 'media' },
+          },
+          guide: [{ id: 'items', title: 'Kontroll', description: '', input_fields: ['items'] }],
+        },
+        lua: '-- status check\n', at: '2026-11-14T10:00:00Z', notes: 'First version.',
+      },
+    },
   },
   'example-org/value-logger': {
     description: 'Logs values to a file',

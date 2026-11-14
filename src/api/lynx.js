@@ -119,6 +119,7 @@ export const lynx = {
   devices: (iid) => request(`/api/v2/devicex/${iid}`),
   functions: (iid) => request(`/api/v2/functionx/${iid}`),
   notificationOutputs: (iid) => request(`/api/v2/notification/${iid}/output`),
+  status: (iid) => request(`/api/v2/status/${iid}`),
 
   // ---- edge apps: catalogue ----
   edgeApps: () => request('/api/v2/edge/app'),

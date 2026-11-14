@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { compareVersions, isCommitVersion, isNewerVersion, sortVersionsDesc, versionName } from '../shared/version.js';
-import { cleanValues, formLayout, initialValues, inputKind, matchesFilter, sameConfig, validate } from '../src/lib/configForm.js';
+import { ageText, cleanValues, describeLatest, formLayout, initialValues, inputKind, latestByTopic, matchesFilter, mediaFiles, sameConfig, searchItems, shown, validate } from '../src/lib/configForm.js';
 import { ensureGithubVersion, githubRepo, latestVersion, normUrl } from '../src/lib/install.js';
 import { demuxLogs, splitImage } from '../server/docker.mjs';
 import { makeTar } from '../server/tar.mjs';
@@ -473,4 +473,61 @@ test('sameConfig: key order does not matter, values do', () => {
   assert.equal(sameConfig({ a: 1, b: { c: [1, { d: 2, e: 3 }] } }, { b: { c: [1, { e: 3, d: 2 }] }, a: 1 }), true);
   assert.equal(sameConfig({ watch: [{ watch_function: 1, watch_label: 'disken' }] }, { watch: [{ watch_function: 1, watch_label: 'diskmaskinen' }] }), false);
   assert.equal(sameConfig(undefined, {}), true);
+});
+
+test('search: name, type and metadata, every word', () => {
+  const items = [
+    { id: 770237, type: 'door_switch', meta: { name: 'Entrédörr Sensor state', topic_read: 'obj/zigbee/204/contact' } },
+    { id: 770234, type: 'unknown', meta: { name: 'Bryggdäck unknown' } },
+    { id: 770261, type: 'switch', meta: { name: 'Kaffebryggare', 'ha.part': 'state' } },
+  ];
+  assert.deepEqual(searchItems(items, 'door').map((x) => x.id), [770237]);
+  assert.deepEqual(searchItems(items, 'Dörr').map((x) => x.id), [770237]);
+  assert.deepEqual(searchItems(items, 'brygg').map((x) => x.id), [770234, 770261]);
+  assert.deepEqual(searchItems(items, 'brygg switch').map((x) => x.id), [770261]);
+  assert.deepEqual(searchItems(items, 'zigbee/204').map((x) => x.id), [770237]);
+  assert.equal(searchItems(items, '  ').length, 3);
+});
+
+test('the latest value per topic, with its meaning', () => {
+  const latest = latestByTopic([
+    { topic: '2642/obj/zigbee/204/contact', value: 0, timestamp: 100 },
+    { topic: '2642/obj/zigbee/204/contact', value: 1, timestamp: 200 },
+  ]);
+  assert.deepEqual(latest['obj/zigbee/204/contact'], { value: 1, timestamp: 200 });
+  const door = { meta: { state_open: '1', state_closed: '0' } };
+  assert.equal(describeLatest(door, latest['obj/zigbee/204/contact']), '1 (öppen)');
+  assert.equal(describeLatest({ meta: {} }, { value: 21.456 }), '21.46');
+  assert.equal(describeLatest(door, undefined), '');
+  assert.equal(ageText(1000, 1030), 'nyss');
+  assert.equal(ageText(1000, 1000 + 600), '10 min');
+  assert.equal(ageText(1000, 1000 + 3 * 86400), '3 d');
+});
+
+test('show_if: a field shown only for some answers is neither checked nor saved when hidden', () => {
+  const opts = {
+    input: {
+      items: { type: 'repeat', input_fields: ['when', 'value'], min: 1 },
+      when: { type: 'option', values: { active: 'på', above: 'över' } },
+      value: { type: 'text', required: true, show_if: { when: ['above'] } },
+    },
+    guide: [{ id: 'a', input_fields: ['items'] }],
+  };
+  assert.equal(shown(opts.input.value, { when: 'active' }), false);
+  assert.equal(shown(opts.input.value, { when: 'above' }), true);
+  assert.equal(shown(opts.input.when, {}), true);
+  assert.deepEqual(validate(opts, { items: [{ when: 'active' }] }), {});
+  assert.equal(validate(opts, { items: [{ when: 'above' }] })['items.0.value'], 'Måste fyllas i');
+  assert.deepEqual(cleanValues(opts, { items: [{ when: 'active', value: '50' }] }).items, [{ when: 'active' }]);
+  assert.deepEqual(cleanValues(opts, { items: [{ when: 'above', value: '50' }] }).items, [{ when: 'above', value: '50' }]);
+});
+
+test('sound files from ha.media_list, together and sorted', () => {
+  const fns = [
+    { meta: { 'ha.media_list': '["iotopen/b.mp3","iotopen/a.mp3"]' } },
+    { meta: { 'ha.media_list': ['iotopen/a.mp3', 'c.mp3'] } },
+    { meta: { 'ha.media_list': 'not json' } },
+    { meta: {} },
+  ];
+  assert.deepEqual(mediaFiles(fns), ['c.mp3', 'iotopen/a.mp3', 'iotopen/b.mp3']);
 });
