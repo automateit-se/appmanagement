@@ -143,7 +143,7 @@ function check(input, v, inputs, key, errors) {
     if (input.min !== undefined && v.length < Number(input.min)) errors[key] = `Minst ${input.min}`;
     else if (input.max !== undefined && v.length > Number(input.max)) errors[key] = `Högst ${input.max}`;
     v.forEach((item, i) => {
-      for (const n of input.input_fields || []) if (inputs[n]) check(inputs[n], item?.[n], inputs, `${key}.${i}.${n}`, errors);
+      for (const n of input.input_fields || []) if (inputs[n] && shown(inputs[n], item)) check(inputs[n], item?.[n], inputs, `${key}.${i}.${n}`, errors);
     });
   } else if (withValue(input)) {
     if (!isObj(v)) errors[key] = 'Ogiltigt värde';
@@ -155,7 +155,7 @@ function check(input, v, inputs, key, errors) {
 export function validate(options, values) {
   const { inputs } = formLayout(options);
   const errors = {};
-  for (const name of topLevel(options)) check(inputs[name], values?.[name], inputs, name, errors);
+  for (const name of topLevel(options)) if (shown(inputs[name], values)) check(inputs[name], values?.[name], inputs, name, errors);
   return errors;
 }
 
@@ -177,7 +177,7 @@ function cleanOne(input, v, inputs) {
     return v.map((item) => {
       const out = {};
       for (const n of input.input_fields || []) {
-        if (!inputs[n]) continue;
+        if (!inputs[n] || !shown(inputs[n], item)) continue;
         const c = cleanOne(inputs[n], item?.[n], inputs);
         if (c !== undefined) out[n] = c;
       }
@@ -193,7 +193,7 @@ export function cleanValues(options, values) {
   const { inputs } = formLayout(options);
   const out = { ...values };
   for (const name of topLevel(options)) {
-    const c = cleanOne(inputs[name], out[name], inputs);
+    const c = shown(inputs[name], values) ? cleanOne(inputs[name], out[name], inputs) : undefined;
     if (c === undefined) delete out[name];
     else out[name] = c;
   }
@@ -315,4 +315,97 @@ export function sameConfig(a, b) {
     return v ?? null;
   };
   return JSON.stringify(norm(a ?? {})) === JSON.stringify(norm(b ?? {}));
+}
+
+// ---- fields shown only for some answers ----------------------------------------------------------------------------
+
+/**
+ * Is a field shown, given the values next to it (the same repeat row, or the top level)? An app.json field can have
+ * "show_if": { "<other field>": "<value>" | ["<value>", ...] }; every condition must hold. IoT Open's own form
+ * ignores the key and shows the field. A hidden field is neither checked nor saved.
+ */
+export function shown(input, siblings) {
+  const cond = input?.show_if;
+  if (!isObj(cond)) return true;
+  return Object.entries(cond).every(([field, want]) => {
+    const have = siblings?.[field];
+    const list = Array.isArray(want) ? want : [want];
+    return list.some((w) => String(w) === String(have ?? ''));
+  });
+}
+
+// ---- finding functions and devices ---------------------------------------------------------------------------------
+
+const fold = (s) => String(s ?? '').toLowerCase();
+
+/**
+ * Items whose name, id, type or any metadata key or value holds every word of the query: "door" finds the type
+ * door_switch, "dörr" the name Entrédörr, "knx 0/1" a topic. An empty query keeps everything.
+ */
+export function searchItems(items, query) {
+  const words = fold(query).split(/\s+/).filter(Boolean);
+  if (!words.length) return items;
+  return items.filter((it) => {
+    const parts = [it.id, it.type, it.name];
+    for (const [k, v] of Object.entries(it.meta || {})) parts.push(k, v);
+    const hay = parts.map(fold).join('\n');
+    return words.every((w) => hay.includes(w));
+  });
+}
+
+/** The latest value per topic from IoT Open's status, without the client id: { topic: { value, timestamp } }. */
+export function latestByTopic(status) {
+  const out = {};
+  for (const e of status || []) {
+    if (!e || !e.topic) continue;
+    const topic = String(e.topic).replace(/^\d+\//, '');
+    const prev = out[topic];
+    if (!prev || Number(e.timestamp) >= Number(prev.timestamp)) out[topic] = { value: e.value, timestamp: Number(e.timestamp) };
+  }
+  return out;
+}
+
+const STATE_WORDS = [
+  ['state_open', 'öppen'], ['state_closed', 'stängd'], ['state_on', 'på'], ['state_off', 'av'],
+  ['state_true', 'aktiv'], ['state_false', 'inte aktiv'],
+];
+
+/** "1 (öppen)", "21.5" - a function's latest value with the meaning its metadata gives it. */
+export function describeLatest(fn, latest) {
+  if (!latest) return '';
+  const v = latest.value;
+  const word = STATE_WORDS.find(([k]) => fn?.meta?.[k] !== undefined && String(fn.meta[k]) === String(v));
+  const shown = typeof v === 'number' ? String(Math.round(v * 100) / 100) : String(v).slice(0, 30);
+  return word ? `${shown} (${word[1]})` : shown;
+}
+
+/** "nyss", "12 min", "3 h", "5 d" since a timestamp in seconds. */
+export function ageText(ts, now = Date.now() / 1000) {
+  const s = Math.max(0, now - Number(ts));
+  if (!Number.isFinite(s)) return '';
+  if (s < 90) return 'nyss';
+  if (s < 3600) return `${Math.round(s / 60)} min`;
+  if (s < 86400 * 2) return `${Math.round(s / 3600)} h`;
+  return `${Math.round(s / 86400)} d`;
+}
+
+// ---- sound files -----------------------------------------------------------------------------------------------
+
+/**
+ * The installation's sound files: ha.media_list (a JSON list, from the Home Assistant integration) on every
+ * function that has it, together and sorted. For a text field with "suggest": "media".
+ */
+export function mediaFiles(functions) {
+  const out = new Set();
+  for (const fn of functions || []) {
+    const raw = fn?.meta?.['ha.media_list'];
+    if (!raw) continue;
+    try {
+      const list = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      if (Array.isArray(list)) for (const x of list) if (typeof x === 'string' && x.trim()) out.add(x.trim());
+    } catch {
+      // not a JSON list: ignored
+    }
+  }
+  return [...out].sort((a, b) => a.localeCompare(b, 'sv'));
 }

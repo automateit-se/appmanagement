@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { lynx } from '../api/lynx.js';
-import { formLayout, inputKind, isToggleOn, matchesFilter, repeatItem, toggleOff, toggleOn, withValue } from '../lib/configForm.js';
+import { ageText, describeLatest, formLayout, inputKind, isToggleOn, latestByTopic, matchesFilter, mediaFiles, repeatItem, searchItems, shown, toggleOff, toggleOn, withValue } from '../lib/configForm.js';
 import { Icon } from './icons.jsx';
 
 // Settings form generated from an edge app's app.json (see lib/configForm.js).
@@ -16,20 +16,27 @@ function usePickables(iid, inputs) {
     devices: kinds.has('device') || kinds.has('devices'),
     outputs: kinds.has('notification') || kinds.has('notifications'),
   };
-  const [data, setData] = useState({ functions: [], devices: [], outputs: [], error: '' });
+  // sound files come from the functions' metadata (ha.media_list)
+  const media = useMemo(() => Object.values(inputs).some((x) => x?.suggest === 'media'), [inputs]);
+  const [data, setData] = useState({ functions: [], devices: [], outputs: [], latest: {}, error: '' });
   useEffect(() => {
     let alive = true;
+    const fns = need.functions || media;
     Promise.all([
-      need.functions ? lynx.functions(iid) : [],
+      fns ? lynx.functions(iid) : [],
       need.devices ? lynx.devices(iid) : [],
       need.outputs ? lynx.notificationOutputs(iid).catch(() => []) : [],
+      // the latest values, so a function can be told by what it shows now; the form works without them
+      need.functions ? lynx.status(iid).catch(() => []) : [],
     ])
-      .then(([functions, devices, outputs]) => alive && setData({ functions: functions || [], devices: devices || [], outputs: outputs || [], error: '' }))
-      .catch((e) => alive && setData({ functions: [], devices: [], outputs: [], error: e.message }));
+      .then(([functions, devices, outputs, status]) =>
+        alive && setData({ functions: functions || [], devices: devices || [], outputs: outputs || [], latest: latestByTopic(status), error: '' }),
+      )
+      .catch((e) => alive && setData({ functions: [], devices: [], outputs: [], latest: {}, error: e.message }));
     return () => {
       alive = false;
     };
-  }, [iid, need.functions, need.devices, need.outputs]);
+  }, [iid, need.functions, need.devices, need.outputs, media]);
   return data;
 }
 
@@ -37,6 +44,30 @@ function itemsFor(kind, input, pick) {
   if (kind.startsWith('function')) return pick.functions.filter((x) => matchesFilter(x, input.filter));
   if (kind.startsWith('device')) return pick.devices.filter((x) => matchesFilter(x, input.filter));
   return pick.outputs;
+}
+
+/** "Entrédörr Sensor state · 1 (öppen), 3 min (#770237)": the name, what it shows now and its id. */
+function itemLabel(it, pick) {
+  const latest = it?.meta?.topic_read ? pick.latest?.[it.meta.topic_read] : undefined;
+  const now = describeLatest(it, latest);
+  return `${nameOf(it)}${now ? ` · ${now}, ${ageText(latest.timestamp)}` : ''} (#${it.id})`;
+}
+
+/** A search box over a list of functions or devices: name, id, type and metadata. */
+function SearchBox({ value, onChange, count, total, label }) {
+  if (total < 8) return null;
+  return (
+    <div className="pick-search">
+      <input
+        type="search"
+        value={value}
+        placeholder="Sök på namn, typ eller metadata, till exempel dörr eller door"
+        aria-label={`Sök ${label}`}
+        onChange={(e) => onChange(e.target.value)}
+      />
+      {value && <small className="muted">{count} av {total}</small>}
+    </div>
+  );
 }
 
 /** Value to set for a selected function (value: true): on/off for switches, otherwise free text or number. */
@@ -54,13 +85,19 @@ function ValueInput({ item, value, onChange, label }) {
   return <input className="value-input" aria-label={label} placeholder="Värde" value={value ?? ''} onChange={(e) => onChange(e.target.value)} />;
 }
 
-function SinglePick({ id, kind, input, items, value, onChange }) {
+function SinglePick({ id, kind, input, items, value, onChange, pick }) {
   const valued = withValue(input);
   const selected = valued ? (isObj(value) ? Object.keys(value)[0] : '') : value === undefined || value === null ? '' : String(value);
   const label = kind === 'function' ? 'funktion' : kind === 'device' ? 'enhet' : 'notifieringsutgång';
   const item = items.find((x) => String(x.id) === String(selected));
+  const [query, setQuery] = useState('');
+  const found = kind === 'notification' ? items : searchItems(items, query);
+  // the chosen one stays in the list, also when the search does not find it
+  const shownItems = item && !found.includes(item) ? [item, ...found] : found;
   return (
-    <div className="row gap wrap">
+    <div className="pick">
+      {kind !== 'notification' && <SearchBox value={query} onChange={setQuery} count={found.length} total={items.length} label={label} />}
+      <div className="row gap wrap">
       <select
         id={id}
         className="grow"
@@ -71,22 +108,28 @@ function SinglePick({ id, kind, input, items, value, onChange }) {
           else onChange(valued ? { [v]: '' } : Number(v));
         }}
       >
-        <option value="">Välj {label}…</option>
-        {items.map((it) => (
+        <option value="">{query && !found.length ? 'Inget hittades' : `Välj ${label}…`}</option>
+        {shownItems.map((it) => (
           <option key={it.id} value={it.id}>
-            {nameOf(it)} (#{it.id})
+            {kind === 'function' ? itemLabel(it, pick) : `${nameOf(it)} (#${it.id})`}
           </option>
         ))}
       </select>
       {valued && selected && <ValueInput item={item} label={`Värde för ${nameOf(item)}`} value={value[selected]} onChange={(v) => onChange({ [selected]: v })} />}
+      </div>
     </div>
   );
 }
 
-function MultiPick({ input, items, value, onChange }) {
+function MultiPick({ kind, input, items, value, onChange, pick }) {
   const valued = withValue(input);
+  const [query, setQuery] = useState('');
   const sel = valued ? new Set(Object.keys(isObj(value) ? value : {}).map(String)) : new Set((Array.isArray(value) ? value : []).map(String));
   if (!items.length) return <p className="muted small">Inget att välja i installationen.</p>;
+  const searchable = kind !== 'notifications';
+  // chosen ones first, then what the search finds
+  const found = searchable ? searchItems(items, query) : items;
+  const list = [...items.filter((it) => sel.has(String(it.id))), ...found.filter((it) => !sel.has(String(it.id)))];
   const toggle = (id, on) => {
     if (valued) {
       const next = { ...(isObj(value) ? value : {}) };
@@ -101,19 +144,23 @@ function MultiPick({ input, items, value, onChange }) {
     }
   };
   return (
+    <>
+    {searchable && <SearchBox value={query} onChange={setQuery} count={found.length} total={items.length} label={kind === 'functions' ? 'funktioner' : 'enheter'} />}
     <ul className="check-list">
-      {items.map((it) => (
+      {list.map((it) => (
         <li key={it.id} className="row gap">
           <label className="check grow">
             <input type="checkbox" checked={sel.has(String(it.id))} onChange={(e) => toggle(it.id, e.target.checked)} />
             <span>
-              {nameOf(it)} <span className="muted small">#{it.id}</span>
+              {nameOf(it)} {kind === 'functions' && <span className="muted small">{describeLatest(it, pick.latest?.[it.meta?.topic_read])}</span>}{' '}
+              <span className="muted small">#{it.id}</span>
             </span>
           </label>
           {valued && sel.has(String(it.id)) && <ValueInput item={it} label={`Värde för ${nameOf(it)}`} value={value[it.id]} onChange={(v) => onChange({ ...value, [it.id]: v })} />}
         </li>
       ))}
     </ul>
+    </>
   );
 }
 
@@ -162,6 +209,16 @@ function Repeat({ name, input, inputs, value, onChange, pick, errors, path }) {
             <strong className="grow small">
               {input.name || name} {i + 1}
             </strong>
+            <button
+              type="button"
+              className="icon-btn"
+              disabled={list.length >= max}
+              title="Kopiera"
+              aria-label={`Kopiera ${i + 1}`}
+              onClick={() => onChange([...list.slice(0, i + 1), structuredClone(item ?? {}), ...list.slice(i + 1)])}
+            >
+              <Icon name="copy" size={16} />
+            </button>
             <button type="button" className="icon-btn" disabled={list.length <= min} title="Ta bort" aria-label={`Ta bort ${i + 1}`} onClick={() => onChange(list.filter((_, j) => j !== i))}>
               <Icon name="trash" size={16} />
             </button>
@@ -173,6 +230,7 @@ function Repeat({ name, input, inputs, value, onChange, pick, errors, path }) {
               input={inputs[n]}
               inputs={inputs}
               value={item?.[n]}
+              siblings={item}
               onChange={(v) => setItem(i, { ...item, [n]: v })}
               pick={pick}
               errors={errors}
@@ -250,22 +308,37 @@ function Control({ name, input, inputs, value, onChange, pick, errors, path }) {
     );
   }
   if (kind === 'function' || kind === 'device' || kind === 'notification') {
-    return <SinglePick id={id} kind={kind} input={input} items={itemsFor(kind, input, pick)} value={value} onChange={onChange} />;
+    return <SinglePick id={id} kind={kind} input={input} items={itemsFor(kind, input, pick)} value={value} onChange={onChange} pick={pick} />;
   }
   if (kind === 'functions' || kind === 'devices' || kind === 'notifications') {
-    return <MultiPick input={input} items={itemsFor(kind, input, pick)} value={value} onChange={onChange} />;
+    return <MultiPick kind={kind} input={input} items={itemsFor(kind, input, pick)} value={value} onChange={onChange} pick={pick} />;
   }
   if (kind === 'repeat') return <Repeat name={name} input={input} inputs={inputs} value={value} onChange={onChange} pick={pick} errors={errors} path={path} />;
   if (kind === 'json') return <JsonInput id={id} value={value} onChange={onChange} />;
   if (input.multiline) return <textarea id={id} rows={4} value={value ?? ''} onChange={(e) => onChange(e.target.value)} />;
   // type "password" (a PIN, an API key): hidden while typed and never offered by the browser's autofill
   if (String(input.type).toLowerCase() === 'password') return <input id={id} type="password" autoComplete="new-password" value={value ?? ''} onChange={(e) => onChange(e.target.value)} spellCheck={false} />;
+  if (input.suggest === 'media') {
+    // the installation's sound files to choose from, and still free text for a file not in the list
+    const files = mediaFiles(pick.functions);
+    return (
+      <>
+        <input id={id} list={`${id}-media`} value={value ?? ''} onChange={(e) => onChange(e.target.value)} spellCheck={false} placeholder={files.length ? 'Välj eller skriv ett ljud…' : undefined} />
+        <datalist id={`${id}-media`}>
+          {files.map((f) => (
+            <option key={f} value={f} />
+          ))}
+        </datalist>
+      </>
+    );
+  }
   return <input id={id} value={value ?? ''} onChange={(e) => onChange(e.target.value)} spellCheck={false} />;
 }
 
-function Field({ name, input, inputs, value, onChange, pick, errors, path, mark }) {
+function Field({ name, input, inputs, value, onChange, pick, errors, path, mark, siblings }) {
   const kind = inputKind(input);
   const error = errors[path];
+  if (!shown(input, siblings)) return null;
   return (
     <div className={mark ? `field marked mark-${mark === 'Ny' ? 'new' : 'changed'}` : 'field'}>
       <label htmlFor={kind === 'repeat' || kind.endsWith('s') ? undefined : `cfg-${path}`}>
@@ -303,6 +376,7 @@ export function ConfigForm({ iid, options, values, onChange, errors = {}, marks 
               input={layout.inputs[name]}
               inputs={layout.inputs}
               value={values[name]}
+              siblings={values}
               onChange={(v) => onChange({ ...values, [name]: v })}
               pick={pick}
               errors={errors}

@@ -108,7 +108,7 @@ test('rate limits sign-in attempts', async () => {
 
 test('catalog from GitHub', async () => {
   const list = await (await get('/app-api/catalog', null)).json();
-  assert.deepEqual(list.map((r) => r.id).sort(), ['example-org/broken-app', 'example-org/broker-tuning', 'example-org/energy-report', 'example-org/light-control', 'example-org/temperature-alarm', 'example-org/value-logger', 'example-vendor/edge-app-door-counter']);
+  assert.deepEqual(list.map((r) => r.id).sort(), ['example-org/broken-app', 'example-org/broker-tuning', 'example-org/energy-report', 'example-org/light-control', 'example-org/status-check', 'example-org/temperature-alarm', 'example-org/value-logger', 'example-vendor/edge-app-door-counter']);
   assert.ok(!list[0].topics.includes('iotopen-edge-app'));
 
   const d = await (await get('/app-api/catalog/example-org/temperature-alarm')).json();
